@@ -1,0 +1,229 @@
+# =====================================================================
+# Source Registry — declarative definitions for every dataset the
+# pipeline ingests.
+# ---------------------------------------------------------------------
+# Adding a new dataset to the pipeline is a YAML edit, not a Python
+# code change. The Bronze layer iterates over this registry; ingestion
+# tasks are generated from it; DQ uses the schema; SCD2 looks up the
+# tracked_columns; PII looks up the hash_columns.
+#
+# Each source is fully self-contained: schema, primary key, SCD2
+# configuration, and PII configuration all live in one block. A new
+# joiner only has to read one place to understand a source completely.
+#
+# Field reference
+# ---------------
+# name:            Logical name. Used everywhere as the source's ID.
+#                  Must match the filename stem if path is auto-derived.
+# description:     Human-readable purpose. Lands in the audit trail.
+# format:          csv | parquet | json   (only csv used for Kaggle)
+# path_pattern:    Where to find the file at ingestion time.
+#                  {raw_root} resolves from config.paths.raw_*
+# primary_key:     List of columns forming the natural key. Used by
+#                  DQ (uniqueness), Silver (dedupe), SCD2 (join key).
+# timestamp_column: Optional. Column the watermark advances against
+#                  for incremental loads. Omit for static dimensions.
+# schema:          Column -> type tag. Type tags match the engine's
+#                  vocabulary: int | long | float | string | bool |
+#                  date | timestamp.
+# scd2:            Optional. Marks the source as a Type-2 dimension.
+#                  tracked_columns drive change detection via row_hash.
+# pii:             Optional. Columns whose values are hashed (salted
+#                  SHA-256) at the Bronze -> Silver boundary.
+# audit:           Per-source audit overrides. Currently only the
+#                  expected_min_rows sanity check — others can be
+#                  added without schema changes.
+# =====================================================================
+
+version: 1                              # schema version of THIS file; bump when
+                                        # fields change so the registry loader
+                                        # can warn on stale configs
+
+sources:
+
+  # -------------------------------------------------------------------
+  # competitions — top-level reference data (Premier League, La Liga,
+  # Champions League etc.). Pure static dimension, no SCD, no PII.
+  # -------------------------------------------------------------------
+  - name: competitions
+    description: Master list of football competitions (leagues, cups, internationals)
+    format: csv
+    path_pattern: "{raw_root}/competitions.csv"
+    primary_key: [competition_id]
+    schema:
+      competition_id: string
+      name: string
+      country_name: string
+      sub_type: string
+      type: string
+      confederation: string
+      url: string
+    audit:
+      expected_min_rows: 10           # sanity: a snapshot with fewer than
+                                       # this many rows is a red flag
+
+  # -------------------------------------------------------------------
+  # clubs — club master records. Could in principle be SCD2 (clubs
+  # change leagues, owners, stadiums), but for this dataset we treat
+  # it as a Type-1 dimension to keep the SCD2 demonstration focused
+  # on players. Documented decision, not an oversight.
+  # -------------------------------------------------------------------
+  - name: clubs
+    description: Master list of football clubs
+    format: csv
+    path_pattern: "{raw_root}/clubs.csv"
+    primary_key: [club_id]
+    schema:
+      club_id: int
+      club_code: string
+      name: string
+      domestic_competition_id: string
+      total_market_value: float
+      squad_size: int
+      average_age: float
+      foreigners_number: int
+      foreigners_percentage: float
+      national_team_players: int
+      stadium_name: string
+      stadium_seats: int
+      net_transfer_record: string
+      coach_name: string
+      last_season: int
+      filename: string
+      url: string
+    audit:
+      expected_min_rows: 100
+
+  # -------------------------------------------------------------------
+  # players — player master records. The flagship SCD2 dimension.
+  # We track (current_club_id, position, market_value_in_eur) because
+  # these are the realistic-to-change attributes; first_name etc. are
+  # treated as Type-1 (overwrite) and hashed for PII.
+  # -------------------------------------------------------------------
+  - name: players
+    description: Player master records (the flagship SCD2 dimension)
+    format: csv
+    path_pattern: "{raw_root}/players.csv"
+    primary_key: [player_id]
+    schema:
+      player_id: int
+      first_name: string
+      last_name: string
+      name: string
+      last_season: int
+      current_club_id: int
+      player_code: string
+      country_of_birth: string
+      city_of_birth: string
+      country_of_citizenship: string
+      date_of_birth: date
+      sub_position: string
+      position: string
+      foot: string
+      height_in_cm: int
+      market_value_in_eur: float
+      highest_market_value_in_eur: float
+      contract_expiration_date: date
+      agent_name: string
+      image_url: string
+      url: string
+      current_club_domestic_competition_id: string
+      current_club_name: string
+    scd2:
+      tracked_columns:
+        - current_club_id              # transfers between clubs
+        - position                      # tactical role changes
+        - market_value_in_eur          # valuation movements
+    pii:
+      hash_columns:
+        - first_name
+        - last_name
+        - name
+        - date_of_birth
+        - city_of_birth
+    audit:
+      expected_min_rows: 1000
+
+  # -------------------------------------------------------------------
+  # games — match records. Fact-table source. Has a timestamp column,
+  # so incremental loads can advance the watermark over it.
+  # -------------------------------------------------------------------
+  - name: games
+    description: Match records (fact source for fact_games)
+    format: csv
+    path_pattern: "{raw_root}/games.csv"
+    primary_key: [game_id]
+    timestamp_column: date              # used for incremental watermark
+    schema:
+      game_id: int
+      competition_id: string
+      season: int
+      round: string
+      date: date
+      home_club_id: int
+      away_club_id: int
+      home_club_goals: int
+      away_club_goals: int
+      home_club_position: int
+      away_club_position: int
+      home_club_manager_name: string
+      away_club_manager_name: string
+      stadium: string
+      attendance: int
+      referee: string
+      url: string
+      home_club_formation: string
+      away_club_formation: string
+      home_club_name: string
+      away_club_name: string
+      aggregate: string
+      competition_type: string
+    audit:
+      expected_min_rows: 1000
+
+  # -------------------------------------------------------------------
+  # appearances — player-per-game records. Fact-table source. Joined
+  # to games for the date, so no own timestamp_column needed.
+  # -------------------------------------------------------------------
+  - name: appearances
+    description: Player appearances per game (fact source for fact_appearances)
+    format: csv
+    path_pattern: "{raw_root}/appearances.csv"
+    primary_key: [appearance_id]
+    schema:
+      appearance_id: string
+      game_id: int
+      player_id: int
+      player_club_id: int
+      player_current_club_id: int
+      date: date
+      player_name: string
+      competition_id: string
+      yellow_cards: int
+      red_cards: int
+      goals: int
+      assists: int
+      minutes_played: int
+    audit:
+      expected_min_rows: 10000
+
+  # -------------------------------------------------------------------
+  # player_valuations — historical player market values. The richest
+  # source of SCD-flavoured data: every row is already a point-in-time
+  # observation. We keep it as a fact-like table (not SCD2 itself) but
+  # use it to feed the player_valuation_trend Gold table.
+  # -------------------------------------------------------------------
+  - name: player_valuations
+    description: Historical player market value observations
+    format: csv
+    path_pattern: "{raw_root}/player_valuations.csv"
+    primary_key: [player_id, date]      # composite natural key
+    timestamp_column: date
+    schema:
+      player_id: int
+      date: date
+      market_value_in_eur: float
+      current_club_id: int
+      player_club_domestic_competition_id: string
+    audit:
+      expected_min_rows: 10000
