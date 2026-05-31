@@ -1,0 +1,23 @@
+# Core runtime dependencies for the Football Analytics Pipeline.
+# Pinned conservatively for reproducibility on a standard laptop.
+
+# --- Data engines ---
+pandas==2.2.2
+pyarrow==16.1.0              # parquet I/O for both pandas and spark interop
+pyspark==3.5.1               # requires Java 17 in the runtime image
+numpy==1.26.4                # pinned to avoid 2.x ABI churn with pandas/pyspark
+
+# --- Storage / query layer ---
+duckdb==1.0.0                # gold query layer over parquet
+
+# --- Config, logging, models ---
+pyyaml==6.0.1
+python-dotenv==1.0.1
+structlog==24.1.0
+pydantic==2.7.4              # typed config + table schemas
+
+# --- Reference data ---
+pycountry==24.6.1            # ISO 3166-1 country normalisation
+
+# --- Utilities ---
+click==8.1.7                 # CLI for scripts/query_gold.py and friends

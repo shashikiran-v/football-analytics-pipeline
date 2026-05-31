@@ -1,0 +1,51 @@
+[project]
+name = "football-analytics-pipeline"
+version = "0.1.0"
+description = "Medallion ETL pipeline over the Kaggle Football dataset"
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+exclude = ["data", "dags/__pycache__", ".venv"]
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",   # pycodestyle + pyflakes
+    "I",             # isort
+    "B",             # bugbear
+    "UP",            # pyupgrade
+    "SIM",           # simplifications
+    "RUF",           # ruff-specific
+]
+ignore = [
+    "E501",  # line length handled by formatter
+    "B008",  # function calls in default args (common with pydantic)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]  # allow assert False in tests
+
+[tool.mypy]
+python_version = "3.11"
+strict_optional = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+disallow_untyped_defs = false       # pragmatic: allow gradual typing
+ignore_missing_imports = true       # pyspark/duckdb stubs are flaky
+exclude = ["tests/", "data/"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+markers = [
+    "pandas: tests that run on the pandas engine",
+    "spark: tests that run on the spark engine (slower)",
+    "e2e: end-to-end smoke tests, may need data/sample/",
+]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--tb=short",
+]

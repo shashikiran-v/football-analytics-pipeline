@@ -1,0 +1,91 @@
+# =====================================================================
+# Football Analytics Pipeline — main configuration
+# ---------------------------------------------------------------------
+# This is the single source of truth at runtime. Anything that might
+# differ between environments (laptop / CI / docker-compose / future
+# cloud deployment) should be here, not hard-coded.
+#
+# Environment variables can be interpolated with ${VAR} or ${VAR:default}.
+# =====================================================================
+
+# Which dataframe engine to use. The pipeline behaves identically
+# either way — this just swaps the implementation behind the
+# DataFrameEngine protocol.
+engine: ${PIPELINE_ENGINE:pandas}     # pandas | spark
+
+# Where data lives on disk. All paths are resolved relative to the
+# repo root unless absolute. In docker-compose these point at a
+# mounted volume so state survives container restarts.
+paths:
+  data_root: ${DATA_ROOT:./data}
+  raw_day1: ${data_root}/day1
+  raw_day2: ${data_root}/day2
+  sample:   ${data_root}/sample        # committed fixtures, used when raw_* is empty
+  lake:     ${data_root}/lake          # bronze / silver / gold parquet
+  bronze:   ${data_root}/lake/bronze
+  silver:   ${data_root}/lake/silver
+  gold:     ${data_root}/lake/gold
+  rejected: ${data_root}/lake/_rejected # DQ quarantine
+  metadata_db: ${data_root}/metadata.db
+  dq_reports:  ${data_root}/dq_reports
+
+# Tables we extract from the source dataset. Order matters for FK
+# validation: parents before children.
+tables:
+  - name: competitions
+    primary_key: [competition_id]
+  - name: clubs
+    primary_key: [club_id]
+  - name: players
+    primary_key: [player_id]
+    scd2:
+      tracked_columns: [current_club_id, position, market_value_in_eur]
+  - name: games
+    primary_key: [game_id]
+  - name: appearances
+    primary_key: [appearance_id]
+  - name: player_valuations
+    primary_key: [player_id, date]     # composite
+
+# Batch & idempotency behaviour.
+batch:
+  # If not provided by Airflow context, the pipeline derives a batch_id
+  # from the current UTC timestamp at this granularity.
+  granularity: hourly                  # hourly | daily
+  # When a (batch_id, layer) is already 'success' in pipeline_runs,
+  # skip re-execution. Set false to force re-runs (e.g. backfills).
+  skip_if_already_succeeded: true
+
+# Data quality behaviour.
+dq:
+  # ERROR-severity failures quarantine bad rows to paths.rejected and
+  # let the task continue with the clean rows. WARN-severity just logs.
+  # Set fail_fast: true to instead raise and let Airflow retry.
+  fail_fast: false
+  suites_path: src/dq/suites.yaml
+
+# PII anonymisation (Bronze -> Silver transition).
+pii:
+  enabled: ${PII_ENABLED:true}
+  config_path: configs/pii.yaml
+  # Salt is read from env at runtime; never commit it.
+  salt_env_var: PII_SALT
+
+# Reference data for transformations.
+reference:
+  position_taxonomy: configs/position_taxonomy.yaml
+  country_iso:       configs/country_iso.yaml
+
+# Logging.
+logging:
+  level: ${LOG_LEVEL:INFO}
+  json: ${LOG_JSON:true}               # JSON for Airflow / file, false for dev TTY
+
+# Spark-specific tuning (ignored when engine=pandas).
+spark:
+  app_name: football-pipeline
+  master: ${SPARK_MASTER:local[*]}
+  config:
+    spark.sql.shuffle.partitions: "8"  # laptop-friendly
+    spark.driver.memory: "2g"
+    spark.sql.session.timeZone: "UTC"
