@@ -82,18 +82,42 @@ project/
 
 ## Build progress
 
-| Phase | Scope                                              | Status |
-| ----- | -------------------------------------------------- | ------ |
+| Phase | Scope                                              | Status   |
+| ----- | -------------------------------------------------- | -------- |
 | 1     | Foundation: config, logging, metadata, engine abstraction + Pandas | ✅ Done |
-| 2     | Bronze + ingestion + committed sample data         | ⏳ Next |
-| 3     | Silver: transforms, star-schema dimensions, SCD2   | ⏳      |
-| 4     | DQ framework + quarantine + report                 | ⏳      |
-| 5     | Gold aggregations + DuckDB views                   | ⏳      |
-| 6     | Day-2 incremental snapshot + SCD2 validation       | ⏳      |
-| 7     | Spark engine implementation                        | ⏳      |
-| 8     | Airflow DAG + idempotency wiring                   | ⏳      |
-| 9     | Docker + docker-compose stack                      | ⏳      |
-| 10    | PII anonymisation, Superset, CI, README polish     | ⏳      |
+| 2a    | Source registry framework + audit infrastructure + ADRs | ✅ Done |
+| 2b    | Bronze ingestion + sample data + Kaggle manifest    | ⏳ Next  |
+| 3     | Silver: transforms, star-schema dimensions, SCD2   | ⏳       |
+| 4     | DQ framework + quarantine + report                 | ⏳       |
+| 5     | Gold aggregations + DuckDB views                   | ⏳       |
+| 6     | Day-2 incremental snapshot + SCD2 validation       | ⏳       |
+| 7     | Spark engine: stub + design doc *(not fully built — cost-aware choice)* | ⏳ |
+| 8     | Airflow DAG + idempotency wiring                   | ⏳       |
+| 9     | Docker + docker-compose stack                      | ⏳       |
+| 10    | PII anonymisation, Superset, CI, README polish     | ⏳       |
+
+### What's in Phase 2a
+
+- **Source registry** (`configs/sources.yaml` + `src/ingestion/registry.py`):
+  declarative source definitions for all six Kaggle tables. Adding a new
+  dataset is a YAML edit, not a code change. Filtered views
+  (`scd2_sources`, `pii_sources`, `incremental_sources`) remove
+  conditional plumbing from consumers.
+- **File checksums** (`src/utils/checksums.py`): streaming MD5 of file
+  contents (constant memory regardless of file size) plus a
+  deterministic schema-version hash for drift detection.
+- **Audit DAO** (`src/metadata/audit.py`): two-table audit infrastructure
+  (mutating row + append-only event log), full file lifecycle from
+  `register_file` through `record_silver_complete`, vendor/filesystem
+  timestamp split, state-machine enforcement, mark_failed asymmetry,
+  and a 6-rule reconciliation engine returning typed findings.
+- **ADRs** (`docs/adr/`): Architecture Decision Records documenting the
+  decisions that shaped both the registry framework and the audit
+  design. See [docs/adr/0000-using-adrs.md](docs/adr/0000-using-adrs.md)
+  for the index.
+
+Total test count after Phase 2a: **98 passing** (engine 21, registry 26,
+checksums 15, audit 36).
 
 ---
 
