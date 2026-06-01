@@ -1,0 +1,118 @@
+# =====================================================================
+# Position Taxonomy
+# ---------------------------------------------------------------------
+# Maps raw position labels (as they appear in players.csv from the
+# Kaggle source) to a canonical taxonomy. Used by Silver's
+# normalise_position transformation.
+#
+# Why declarative
+#   New position variants from the vendor (e.g. "WingBack" vs "Wing Back")
+#   can be added by editing this YAML — no code change required.
+#
+# Two-level taxonomy
+#   canonical : the standard label we store in dim_players
+#   category  : a coarse grouping for analytics (goalkeeper, defender,
+#               midfielder, forward) — handy for the Gold layer's
+#               player_performance breakdowns
+#
+# Unknown / null input
+#   Raw values not in this map are recorded as canonical='Unknown' and
+#   category='Unknown'. The DQ layer can choose to flag this; the
+#   Silver layer never drops the row just because the position is
+#   unrecognised.
+# =====================================================================
+
+# --- Goalkeepers ---
+GK:
+  canonical: Goalkeeper
+  category: goalkeeper
+Goalkeeper:
+  canonical: Goalkeeper
+  category: goalkeeper
+
+# --- Defenders ---
+CB:
+  canonical: Centre-Back
+  category: defender
+"Centre-Back":
+  canonical: Centre-Back
+  category: defender
+"Center-Back":
+  canonical: Centre-Back
+  category: defender
+LB:
+  canonical: Left-Back
+  category: defender
+"Left-Back":
+  canonical: Left-Back
+  category: defender
+RB:
+  canonical: Right-Back
+  category: defender
+"Right-Back":
+  canonical: Right-Back
+  category: defender
+LWB:
+  canonical: Left Wing-Back
+  category: defender
+RWB:
+  canonical: Right Wing-Back
+  category: defender
+
+# --- Midfielders ---
+CDM:
+  canonical: Defensive Midfield
+  category: midfielder
+"Defensive Midfield":
+  canonical: Defensive Midfield
+  category: midfielder
+CM:
+  canonical: Central Midfield
+  category: midfielder
+"Central Midfield":
+  canonical: Central Midfield
+  category: midfielder
+CAM:
+  canonical: Attacking Midfield
+  category: midfielder
+"Attacking Midfield":
+  canonical: Attacking Midfield
+  category: midfielder
+LM:
+  canonical: Left Midfield
+  category: midfielder
+RM:
+  canonical: Right Midfield
+  category: midfielder
+
+# --- Forwards ---
+LW:
+  canonical: Left Winger
+  category: forward
+"Left Winger":
+  canonical: Left Winger
+  category: forward
+RW:
+  canonical: Right Winger
+  category: forward
+"Right Winger":
+  canonical: Right Winger
+  category: forward
+ST:
+  canonical: Striker
+  category: forward
+Striker:
+  canonical: Striker
+  category: forward
+CF:
+  canonical: Centre-Forward
+  category: forward
+"Centre-Forward":
+  canonical: Centre-Forward
+  category: forward
+SS:
+  canonical: Second Striker
+  category: forward
+"Second Striker":
+  canonical: Second Striker
+  category: forward

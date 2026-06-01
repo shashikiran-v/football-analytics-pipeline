@@ -1,0 +1,56 @@
+# =====================================================================
+# Country Name Overrides (ISO 3166-1)
+# ---------------------------------------------------------------------
+# Maps non-canonical country strings to their ISO 3166-1 alpha-2 codes.
+# Used by Silver's normalise_country transformation.
+#
+# How country normalisation works
+#   1. We try pycountry's built-in lookup first (handles ~250 standard
+#      forms including alpha-2, alpha-3, official names, common names).
+#   2. If pycountry returns nothing, this file is consulted.
+#   3. If still nothing, the value is recorded as alpha-2 'XX' (unknown)
+#      and a DQ warning fires.
+#
+# Why an override file (not just pycountry)
+#   Vendors deliver inconsistent country strings: "England, United
+#   Kingdom", "USA", "Republic of Korea (South)", regional qualifiers,
+#   typos. pycountry handles the well-formed cases; this file handles
+#   the messy real-world ones we observe in the Kaggle data.
+#
+# Adding a new mapping
+#   Add a line:    "vendor-string": ISO_ALPHA2
+#   Then re-run pytest tests/test_silver_transforms.py — the
+#   normalisation tests will pick it up automatically.
+# =====================================================================
+
+# UK constituent countries — Kaggle uses these as "country_of_birth"
+# values and they aren't standalone ISO 3166-1 entries.
+England: GB
+"England, United Kingdom": GB
+Scotland: GB
+Wales: GB
+"Northern Ireland": GB
+
+# USA shorthand
+USA: US
+"United States of America": US
+
+# Common alternates seen in the Kaggle Football data
+"Korea, South": KR
+"Korea, Republic of": KR
+"South Korea": KR
+"Korea, North": KP
+"North Korea": KP
+"Czech Republic": CZ
+Czechia: CZ
+"Ivory Coast": CI
+"Cote d'Ivoire": CI
+"Democratic Republic of the Congo": CD
+DR Congo: CD
+"Republic of the Congo": CG
+"Russian Federation": RU
+"Republic of Ireland": IE
+"Bosnia-Herzegovina": BA
+"FYR Macedonia": MK
+"North Macedonia": MK
+Macedonia: MK
