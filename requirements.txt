@@ -21,3 +21,8 @@ pycountry==24.6.1            # ISO 3166-1 country normalisation
 
 # --- Utilities ---
 click==8.1.7                 # CLI for scripts/query_gold.py and friends
+
+# --- Vendor SDKs ---
+# Optional at import time: only the seed_kaggle script imports it, and it
+# imports lazily so the runtime cost is zero unless `make seed` is invoked.
+kaggle==1.6.17

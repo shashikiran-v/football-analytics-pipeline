@@ -1,0 +1,4 @@
+competition_id,name,country_name,sub_type,type,confederation,url
+GB1,Premier League,England,first_tier,domestic_league,uefa,https://example.com/comp/GB1
+ES1,La Liga,Spain,first_tier,domestic_league,uefa,https://example.com/comp/ES1
+L1,Bundesliga,Germany,first_tier,domestic_league,uefa,https://example.com/comp/L1

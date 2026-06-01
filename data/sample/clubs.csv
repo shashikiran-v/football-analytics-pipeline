@@ -1,0 +1,6 @@
+club_id,club_code,name,domestic_competition_id,total_market_value,squad_size,average_age,foreigners_number,foreigners_percentage,national_team_players,stadium_name,stadium_seats,net_transfer_record,coach_name,last_season,filename,url
+1,arsenal-fc,Arsenal FC,GB1,900000000,25,27.5,18,72.0,8,Arsenal FC Stadium,60000,+50000000,Unknown Coach,2024,arsenal-fc.json,https://example.com/club/1
+2,chelsea-fc,Chelsea FC,GB1,850000000,28,27.5,22,78.6,8,Chelsea FC Stadium,60000,+50000000,Unknown Coach,2024,chelsea-fc.json,https://example.com/club/2
+3,real-madrid,Real Madrid,ES1,1200000000,26,27.5,12,46.2,8,Real Madrid Stadium,60000,+50000000,Unknown Coach,2024,real-madrid.json,https://example.com/club/3
+4,fc-barcelona,FC Barcelona,ES1,1100000000,27,27.5,15,55.6,8,FC Barcelona Stadium,60000,+50000000,Unknown Coach,2024,fc-barcelona.json,https://example.com/club/4
+5,bayern-munich,FC Bayern München,L1,1000000000,26,27.5,14,53.8,8,FC Bayern München Stadium,60000,+50000000,Unknown Coach,2024,bayern-munich.json,https://example.com/club/5
