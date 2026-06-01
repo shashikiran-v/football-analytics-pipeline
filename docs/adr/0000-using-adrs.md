@@ -69,6 +69,7 @@ old one's Status field to reflect that.
 | 0000   | Using Architecture Decision Records | Accepted |
 | 0001   | Audit Table Design                  | Accepted |
 | 0002   | Source Registry as a Framework      | Accepted |
+| 0003   | Bronze Storage and Partitioning     | Accepted |
 
 Future phases will add ADRs covering Pandas-vs-Spark scope, DQ failure
 semantics, idempotency mechanisms, and Gold-layer storage choices.

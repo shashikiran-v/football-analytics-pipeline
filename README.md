@@ -86,8 +86,8 @@ project/
 | ----- | -------------------------------------------------- | -------- |
 | 1     | Foundation: config, logging, metadata, engine abstraction + Pandas | ✅ Done |
 | 2a    | Source registry framework + audit infrastructure + ADRs | ✅ Done |
-| 2b    | Bronze ingestion + sample data + Kaggle manifest    | ⏳ Next  |
-| 3     | Silver: transforms, star-schema dimensions, SCD2   | ⏳       |
+| 2b    | Bronze ingestion + sample data + Kaggle manifest    | ✅ Done  |
+| 3     | Silver: transforms, star-schema dimensions, SCD2   | ⏳ Next  |
 | 4     | DQ framework + quarantine + report                 | ⏳       |
 | 5     | Gold aggregations + DuckDB views                   | ⏳       |
 | 6     | Day-2 incremental snapshot + SCD2 validation       | ⏳       |
@@ -119,45 +119,137 @@ project/
 Total test count after Phase 2a: **98 passing** (engine 21, registry 26,
 checksums 15, audit 36).
 
+### What's in Phase 2b
+
+- **Sample data** (`data/sample/*.csv`, `scripts/generate_samples.py`):
+  six committed CSVs across all Kaggle sources, deterministically
+  generated, with edge cases deliberately seeded — one orphan FK in
+  appearances (for DQ to catch), position-label variants for the
+  normaliser, country-name variants for the ISO normaliser, three
+  SCD2-prone players for Phase 6's day-2 demo. Reviewers can run the
+  pipeline out-of-the-box without a Kaggle account.
+- **Kaggle fetcher** (`scripts/seed_kaggle.py`, `make seed`): downloads
+  the full dataset via the Kaggle API and writes a `_manifest.json`
+  carrying the dataset's `lastUpdated` timestamp — the authoritative
+  vendor provenance flows through to the audit DAO.
+- **Vendor manifest reader** (`src/ingestion/manifest.py`): typed,
+  version-aware, returns None for "no manifest present" so the
+  audit layer's vendor_timestamp_source = 'filesystem_only' path stays
+  clean.
+- **File loader** (`src/ingestion/file_loader.py`): single chokepoint
+  that produces a typed `LoadResult` per source — engine-native
+  DataFrame plus a `FileFingerprint` ready for `audit.register_file()`.
+  Engine-agnostic; Bronze passes the engine through.
+- **Bronze layer** (`src/bronze/writer.py`, `src/bronze/run.py`): writes
+  Hive-partitioned Parquet to `data/lake/bronze/<source>/batch_id=<id>/`.
+  Layer-grain idempotency (re-running a batch is a no-op) AND file-grain
+  idempotency (vendor-resend detection across batches). Continue-on-
+  failure semantics — one bad source doesn't abort the batch. Never-raise
+  contract on the writer; failures captured in BronzeWriteResult.
+- **ADR-0003** documents the Bronze design choices, including the
+  underscore-prefix trap caught by smoke testing.
+
+After Phase 2b, the pipeline produces real output for the first time.
+You can `python -m src.bronze.run --batch-id $(date -u +%Y-%m-%dT%H)`
+and watch six Parquet partitions appear on disk with full audit
+lineage in `data/metadata.db`.
+
+Total test count after Phase 2b: **170 passing, 1 skipped**
+(adds: samples 13+1, manifest 12, file_loader 17, bronze 18).
+
 ---
 
-## Running what exists today (Phase 1)
+## Running the pipeline
+
+### First-time setup
 
 ```bash
 # Clone and enter
 git clone https://github.com/<your-username>/football-analytics-pipeline.git
 cd football-analytics-pipeline
 
-# Set up a virtual environment
+# Set up a virtual environment (Python 3.11+)
 python3.11 -m venv .venv
 source .venv/bin/activate
 
 # Install dependencies
 pip install -r requirements-dev.txt
-
-# Run the test suite (21 tests, ~1 second)
-pytest tests/ -v
 ```
 
-You should see 21 tests pass against the Pandas engine. The same suite
-will run against PySpark when the Spark engine lands in Phase 7.
+### Verifying the build
 
-### What you can poke at right now
+```bash
+# Run the full test suite (~3 seconds)
+pytest tests/
+
+# Expected: 170 passed, 1 skipped
+```
+
+### Running Bronze end-to-end
+
+The committed sample data lets you run Bronze without a Kaggle account.
+
+```bash
+# Run Bronze against the committed samples
+python -m src.bronze.run --batch-id demo-1 --raw-root data/sample
+
+# Expected summary at the end:
+#   Bronze run summary — batch_id=demo-1
+#     status: success
+#     total rows: 74
+#     per source:
+#       competitions       written   rows=3
+#       clubs              written   rows=5
+#       players            written   rows=12
+#       games              written   rows=6
+#       appearances        written   rows=30
+#       player_valuations  written   rows=18
+
+# Inspect what was produced
+find data/lake/bronze -type f -name '*.parquet' | sort
+```
+
+### Demonstrating idempotency
+
+Two complementary mechanisms protect against accidental duplicate work:
+
+```bash
+# Layer-grain idempotency: re-running the same batch_id is a no-op
+python -m src.bronze.run --batch-id demo-1 --raw-root data/sample
+# Expected: status: skipped — already succeeded
+
+# File-grain idempotency: fresh batch_id with unchanged files
+# skips every source individually, citing the prior batch
+python -m src.bronze.run --batch-id demo-2 --raw-root data/sample
+# Expected: every source 'skipped', skip_reason mentions demo-1
+```
+
+### Inspecting the audit trail
+
+The metadata DB at `data/metadata.db` captures every file's lifecycle:
 
 ```python
-# Load the typed config
-from src.utils.config import load_config
-cfg = load_config()
-print(cfg.engine, cfg.paths.bronze)
-
-# Initialise the metadata DB
-from src.metadata.db import init_db
-init_db()                                # creates data/metadata.db
-
-# Try the engine abstraction
-from src.engines.factory import get_engine
-engine = get_engine()                    # picks Pandas from config
+python -c "
+from src.metadata import audit
+rows = audit.list_batch_files(batch_id='demo-1')
+for r in rows:
+    print(f'{r.source_name:20s} {r.status.value:12s} '
+          f'source={r.source_row_count:>4} bronze={r.bronze_row_count:>4}')
+"
 ```
+
+### Fetching the full Kaggle dataset
+
+To run against the real data (requires a Kaggle API token at
+`~/.kaggle/kaggle.json`):
+
+```bash
+make seed                                         # downloads data/day1/*.csv + _manifest.json
+python -m src.bronze.run --raw-root data/day1     # batch_id auto-derived from UTC now
+```
+
+The fetched data carries a `_manifest.json` whose `vendor_last_updated`
+field flows into the audit DAO as the authoritative vendor timestamp.
 
 ---
 
