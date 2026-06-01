@@ -4,8 +4,15 @@ Metadata database.
 A tiny SQLite database that tracks pipeline run state. Lives next to
 the data lake on the mounted volume so state survives container restarts.
 
-Three tables, each owned by a single DAO module (runs.py, dq_results.py,
-watermarks.py). This module owns schema creation and connection handling.
+Five tables, each owned by a single DAO module:
+
+  pipeline_runs       (runs.py)         layer-level idempotency
+  dq_results          (dq_results.py)   per-check audit trail
+  scd_watermarks      (watermarks.py)   incremental high-water marks
+  file_audit          (audit.py)        per-file provenance & reconciliation
+  file_audit_events   (audit.py)        append-only event timeline per file
+
+This module owns schema creation and connection handling.
 
 Why SQLite (not Postgres):
   - zero ops cost, no extra service in docker-compose
@@ -73,10 +80,85 @@ CREATE TABLE IF NOT EXISTS scd_watermarks (
     updated_at              TEXT NOT NULL
 );
 
+-- =====================================================================
+-- file_audit — per-file provenance and reconciliation.
+-- ---------------------------------------------------------------------
+-- One mutating row per (batch_id, source_file_path). Always reflects
+-- the current state of a file's journey through the pipeline. Pairs
+-- with file_audit_events (below) which holds the append-only timeline.
+--
+-- Row-count semantics:
+--   source_row_count  : rows read from the file as ingested
+--   bronze_row_count  : rows written to Bronze parquet (after schema enforcement)
+--   silver_row_count  : rows that survived DQ + transforms into Silver
+--   rejected_row_count: rows quarantined by DQ (so bronze = silver + rejected)
+--
+-- Timestamp semantics (see ADR-0001):
+--   source_modified_at_vendor    : vendor's authoritative "last changed"
+--                                  (from Kaggle API manifest or HTTP Last-Modified)
+--   source_modified_at_filesystem: file's mtime on our disk
+--   vendor_timestamp_source      : 'manifest' | 'http_header' | 'filesystem_only'
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS file_audit (
+    batch_id                       TEXT NOT NULL,
+    source_name                    TEXT NOT NULL,   -- logical source ('players', etc.)
+    source_file_path               TEXT NOT NULL,   -- actual path on disk
+
+    -- File fingerprint (immutable for a given content)
+    file_size_bytes                INTEGER,
+    file_checksum_md5              TEXT,
+    schema_version_hash            TEXT,
+    source_modified_at_vendor      TEXT,            -- ISO8601, nullable
+    source_modified_at_filesystem  TEXT,            -- ISO8601, populated when known
+    vendor_timestamp_source        TEXT,            -- enum-as-string, nullable
+
+    -- Row counts at each stage (NULL until that stage runs)
+    source_row_count               INTEGER,
+    bronze_row_count               INTEGER,
+    silver_row_count               INTEGER,
+    rejected_row_count             INTEGER,
+
+    -- Status & timing
+    status                         TEXT NOT NULL,   -- see FileStatus enum in audit.py
+    registered_at                  TEXT NOT NULL,
+    started_at                     TEXT,
+    finished_at                    TEXT,
+    error_message                  TEXT,
+    error_stage                    TEXT,            -- which layer raised
+
+    PRIMARY KEY (batch_id, source_file_path)
+);
+
+-- =====================================================================
+-- file_audit_events — append-only event log per file.
+-- ---------------------------------------------------------------------
+-- One row per state transition. Forensic timeline of what happened to
+-- each file. NEVER overwritten; mutations to file_audit always write a
+-- corresponding event here in the same transaction.
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS file_audit_events (
+    event_id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    batch_id          TEXT NOT NULL,
+    source_file_path  TEXT NOT NULL,
+    event_type        TEXT NOT NULL,                -- see EventType enum in audit.py
+    event_payload     TEXT,                          -- JSON, optional context
+    occurred_at       TEXT NOT NULL,
+    FOREIGN KEY (batch_id, source_file_path)
+        REFERENCES file_audit(batch_id, source_file_path)
+);
+
 CREATE INDEX IF NOT EXISTS idx_pipeline_runs_status
     ON pipeline_runs(status);
 CREATE INDEX IF NOT EXISTS idx_dq_results_failed
     ON dq_results(passed, severity);
+CREATE INDEX IF NOT EXISTS idx_file_audit_status
+    ON file_audit(status);
+CREATE INDEX IF NOT EXISTS idx_file_audit_batch
+    ON file_audit(batch_id);
+CREATE INDEX IF NOT EXISTS idx_file_audit_checksum
+    ON file_audit(file_checksum_md5);              -- for find_previous_successful_ingestion
+CREATE INDEX IF NOT EXISTS idx_events_batch_file
+    ON file_audit_events(batch_id, source_file_path);
 """
 
 
