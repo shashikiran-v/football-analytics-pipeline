@@ -72,6 +72,7 @@ old one's Status field to reflect that.
 | 0003   | Bronze Storage and Partitioning     | Accepted |
 | 0004   | Silver Transformation Strategy      | Accepted |
 | 0005   | SCD Type 2 Implementation           | Accepted |
+| 0006   | Data Quality Framework Design       | Accepted |
 
-Future phases will add ADRs covering DQ failure semantics, Gold-layer
-storage choices, and Spark engine scope.
+Future phases will add ADRs covering Gold-layer storage choices and
+Spark engine scope.

@@ -88,8 +88,8 @@ project/
 | 2a    | Source registry framework + audit infrastructure + ADRs | ✅ Done |
 | 2b    | Bronze ingestion + sample data + Kaggle manifest    | ✅ Done  |
 | 3     | Silver: transforms, star-schema dimensions, SCD Type 2 | ✅ Done  |
-| 4     | DQ framework + quarantine + report                 | ⏳ Next  |
-| 5     | Gold aggregations + DuckDB views                   | ⏳       |
+| 4     | DQ framework + quarantine + report                 | ✅ Done  |
+| 5     | Gold aggregations + DuckDB views                   | ⏳ Next  |
 | 6     | Day-2 incremental snapshot + SCD2 validation       | ⏳       |
 | 7     | Spark engine: stub + design doc *(not fully built — cost-aware choice)* | ⏳ |
 | 8     | Airflow DAG + idempotency wiring                   | ⏳       |
@@ -215,6 +215,60 @@ Total test count after Phase 3: **283 passing, 1 skipped**
 (adds: silver_transforms 52, scd2 17, dimensions 17, facts 12,
 silver_run 15).
 
+### What's in Phase 4
+
+Phase 4 adds the Data Quality framework, sitting between Bronze and
+Silver as a gate. Bad rows never reach Silver — they're quarantined
+to `data/lake/_rejected/` with a precise failure reason. The deliberate
+orphan `player_id=9999` (seeded back in Phase 2b) is now caught here
+rather than reaching `fact_appearances` with a NULL surrogate key.
+
+- **Declarative rules in YAML** (`configs/dq_rules.yaml`): 27 rules
+  covering all five brief-mandated rule types (not-null, range,
+  unique, foreign_key, schema) across the six sources. Each rule
+  declares its severity (`critical` or `warning`); adding a new rule
+  is a YAML edit.
+- **Typed rule implementations** (`src/dq/rules.py`): five Pydantic
+  rule classes with a discriminated union (`Field(discriminator="rule_type")`)
+  for the YAML loader. New rule types are Python additions; new
+  *instances* are pure YAML. The same framework-style argument from
+  ADR-0002 applied to a different layer.
+- **DQ runner** (`src/dq/runner.py`): `run_dq_for_source` orchestrates
+  rule evaluation for one source. Pre-loads FK lookup sets via
+  `build_fk_lookups` for O(1) per-row FK checks. Returns a typed
+  `DQResult` with clean rows, failing rows, per-rule outcomes, and
+  the `_dq_failure_reason` column composed from critical rule IDs.
+- **Quarantine writer** (`src/dq/quarantine.py`): writes failing rows
+  to `data/lake/_rejected/<source>/batch_id=<id>/` in the same
+  Hive-partitioned format as Bronze and Silver. Reviewers can `cat`
+  the directory to see exactly which rows failed which rules.
+- **Per-batch JSON report** (`src/dq/report.py`): emits
+  `data/dq_reports/<batch_id>.json` with batch summary plus per-source
+  rule-level breakdown. The brief's §7 "DQ report per batch"
+  requirement made tangible — operators and downstream tooling can
+  parse the report rather than scraping logs.
+- **Silver runner integration** (`src/silver/run.py`): DQ runs BEFORE
+  any dim/fact builder consumes Bronze. Single Bronze read per source;
+  clean data flows through to builders; quarantine + audit
+  `record_quarantine` for failures. Continue-on-failure preserved.
+- **ADR-0006**: documents every Phase 4 design decision with
+  alternatives explicitly rejected — DQ-as-gate vs parallel vs after
+  Silver; declarative YAML vs DSL vs inline Python; quarantine vs
+  silent-drop vs flag-column; critical+warning vs single-severity;
+  FK fail-open vs fail-closed.
+
+After Phase 4, the pipeline produces dim/fact tables with NO orphan
+FKs by construction. `fact_appearances` has 29 rows (not 30); the
+orphan lives in `data/lake/_rejected/appearances/` with the failure
+reason intact; `audit.list_batch_files` shows
+`bronze=30, rejected=1, silver=29` for the appearances row. Math
+reconciles; lineage is preserved; the brief's §7 requirements are
+fully covered.
+
+Total test count after Phase 4: **330 passing, 1 skipped**
+(adds: dq_rules 21, dq_runner 11, dq_report 9, plus 6 dq_integration
+in test_silver_run.py).
+
 ---
 
 ## Running the pipeline
@@ -336,6 +390,67 @@ for r in rows:
 Five sources reach `transformed` status with accurate silver row counts;
 `player_valuations` stays at `ingested` (no Silver builder consumes it;
 Phase 5's Gold layer queries it directly from Bronze).
+
+### Verifying DQ catches the orphan
+
+The deliberate orphan `player_id=9999` we seeded into the sample
+appearances is caught by the DQ framework's FK rule before it can
+reach Silver. After Silver runs, the orphan lives in `_rejected/`
+with a precise failure reason; `fact_appearances` is clean (29 rows,
+not 30).
+
+```bash
+# Look at the per-batch DQ report
+cat data/dq_reports/demo-1.json | python -m json.tool | head -30
+```
+
+Expected: `total_rows_quarantined: 1`,
+`sources_with_critical_failures: ["appearances"]`,
+the appearances source report shows `rows_in: 30, rows_clean: 29,
+rows_quarantined: 1`, and the failing rule is
+`foreign_key:appearances.player_id->players.player_id`.
+
+```bash
+# Inspect the quarantined row on disk
+python -c "
+import pandas as pd
+df = pd.read_parquet('data/lake/_rejected/appearances')
+print(f'Quarantined: {len(df)} row(s)')
+print(df[['appearance_id', 'player_id', 'game_id', '_dq_failure_reason']].to_string(index=False))
+"
+```
+
+Expected: one row, `appearance_id=A08030`, `player_id=9999`, with
+failure reason `foreign_key:appearances.player_id->players.player_id`.
+
+```bash
+# Confirm fact_appearances is clean (no NULL player_sk)
+python -c "
+import pandas as pd
+fact = pd.read_parquet('data/lake/silver/fact_appearances')
+print(f'fact_appearances rows: {len(fact)}')
+print(f'player_sk null count: {fact[\"player_sk\"].isna().sum()}')
+print(f'orphan player_id=9999 present? {(fact[\"player_id\"] == 9999).any()}')
+"
+```
+
+Expected: 29 rows, 0 NULL player_sk, orphan not present.
+
+```bash
+# Confirm the audit DAO captured the quarantine
+python -c "
+from src.metadata import audit
+rows = audit.list_batch_files(batch_id='demo-1')
+for r in rows:
+    if r.source_name == 'appearances':
+        print(f'appearances: bronze={r.bronze_row_count}, '
+              f'rejected={r.rejected_row_count}, silver={r.silver_row_count}')
+"
+```
+
+Expected: `bronze=30, rejected=1, silver=29`. The math reconciles at
+source grain — the property ADR-0001 and ADR-0006 are designed to
+preserve.
 
 ### Demonstrating idempotency
 
