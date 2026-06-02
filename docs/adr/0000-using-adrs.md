@@ -73,6 +73,6 @@ old one's Status field to reflect that.
 | 0004   | Silver Transformation Strategy      | Accepted |
 | 0005   | SCD Type 2 Implementation           | Accepted |
 | 0006   | Data Quality Framework Design       | Accepted |
+| 0007   | Gold Layer Storage and Analytics    | Accepted |
 
-Future phases will add ADRs covering Gold-layer storage choices and
-Spark engine scope.
+Future phases will add an ADR covering Spark engine scope.

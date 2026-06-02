@@ -89,8 +89,8 @@ project/
 | 2b    | Bronze ingestion + sample data + Kaggle manifest    | ✅ Done  |
 | 3     | Silver: transforms, star-schema dimensions, SCD Type 2 | ✅ Done  |
 | 4     | DQ framework + quarantine + report                 | ✅ Done  |
-| 5     | Gold aggregations + DuckDB views                   | ⏳ Next  |
-| 6     | Day-2 incremental snapshot + SCD2 validation       | ⏳       |
+| 5     | Gold aggregations + DuckDB views                   | ✅ Done  |
+| 6     | Day-2 incremental snapshot + SCD2 validation       | ⏳ Next  |
 | 7     | Spark engine: stub + design doc *(not fully built — cost-aware choice)* | ⏳ |
 | 8     | Airflow DAG + idempotency wiring                   | ⏳       |
 | 9     | Docker + docker-compose stack                      | ⏳       |
@@ -269,6 +269,87 @@ Total test count after Phase 4: **330 passing, 1 skipped**
 (adds: dq_rules 21, dq_runner 11, dq_report 9, plus 6 dq_integration
 in test_silver_run.py).
 
+### What's in Phase 5
+
+Phase 5 adds the Gold analytical layer with a hybrid storage strategy:
+materialised Parquet artifacts (consistent with Bronze/Silver) PLUS
+DuckDB views over them for interactive SQL querying. The brief's
+five §6 analytical questions are all answered with materialised
+Gold tables; each artifact's `gold_row_count` is recorded in the
+audit DAO with full source-grain lineage.
+
+- **DuckDB session** (`src/gold/duckdb_session.py`): in-memory
+  connection with all Silver dim/fact tables AND Bronze
+  `player_valuations` registered as queryable views. After session
+  creation, Gold queries reference tables by name with no path
+  resolution. Context-managed lifecycle so connections always close
+  cleanly.
+- **Typed Gold artifacts** (`src/gold/artifacts.py`): five Pydantic
+  `GoldArtifact` constants, one per §6 question. SQL lives as
+  multi-line Python strings (not YAML — SQL is code; typos should
+  fail at import). Metadata around the SQL stays declarative
+  (`name`, `sources`, `primary_source`, `description`). New
+  artifacts = one constant + one append to `ALL_ARTIFACTS`.
+- **The five artifacts:**
+  * `top_scorers_by_season` (§6.1) — joins fact_appearances to
+    dim_players via SCD2 `player_sk` (player's club AT THE TIME
+    of the appearance).
+  * `club_season_summary` (§6.2) — unions home + away perspectives
+    of fact_games to compute per-club season totals
+    (matches_played, wins/draws/losses, goals, points).
+  * `top_players_all_time` (§6.3) — lifetime per-player aggregates
+    with `goals_per_appearance` as a derived efficiency metric.
+  * `player_valuation_rolling_avg` (§6.4) — **DuckDB window function
+    showcase.** 90-day rolling AVG of market value via
+    `AVG(...) OVER (PARTITION BY player_id ORDER BY date
+    ROWS BETWEEN 89 PRECEDING AND CURRENT ROW)`. Reads
+    `bronze_player_valuations` directly (no Silver layer per
+    ADR-0005). SCD2 as-of-event join expressed in SQL via range
+    predicate.
+  * `club_performance_metrics` (§6.5) — per-club lifetime metrics
+    including clean sheets, win rate, goals per game.
+- **Gold builder** (`src/gold/builders.py`): `build_gold_artifact`
+  executes SQL via DuckDB, appends `batch_id` partition column,
+  writes Hive-partitioned Parquet to `data/lake/gold/<artifact>/`.
+- **Gold CLI runner** (`src/gold/run.py`): parallel structure to
+  Silver runner. Layer-grain idempotency, single DuckDB session,
+  continue-on-failure per-artifact. Calls
+  `audit.record_gold_complete` on each artifact's primary Bronze
+  source.
+- **Audit DAO extensions** (`src/metadata/audit.py`,
+  `src/metadata/db.py`): added `gold_row_count` column,
+  `record_gold_complete` function, `GOLD_FINISHED` event type, and
+  `_apply_migrations` for forward-compatible schema updates.
+  Crucially: Gold does NOT add a new lifecycle state — it's an
+  analytical view, not a new stage. The `gold_row_count` is set
+  without changing file status.
+- **ADR-0007**: documents the hybrid storage strategy, DuckDB
+  choice, SQL-as-code-not-YAML decision, source-grain audit
+  attribution, no-new-lifecycle-state design, and the
+  `player_valuations` Bronze→Gold direct lineage. Alternatives
+  explicitly rejected.
+
+After Phase 5, the pipeline runs end-to-end in three commands and
+produces a complete source-grain lineage record:
+
+```
+source                bronze  rejected  silver    gold
+appearances               30         1      29      12
+clubs                      5         0       5       0
+competitions               3         0       3       0
+games                      6         0       6       5
+player_valuations         18         0       0      18
+players                   12         0      12       0
+```
+
+The `player_valuations` row shows the architecturally-deliberate
+skip-Silver pattern honestly: `silver=0` because no Silver builder
+exists, `gold=18` because Gold consumed it directly via the
+DuckDB view.
+
+Total test count after Phase 5: **377 passing, 1 skipped**
+(adds: gold_duckdb 6, gold_artifacts 28, gold_run 13).
+
 ---
 
 ## Running the pipeline
@@ -291,11 +372,25 @@ pip install -r requirements-dev.txt
 ### Verifying the build
 
 ```bash
-# Run the full test suite (~3 seconds)
+# Run the full test suite (~30 seconds)
 pytest tests/
 
-# Expected: 170 passed, 1 skipped
+# Expected: 377 passed, 1 skipped
 ```
+
+### Full pipeline in three commands
+
+After Phase 5, the complete Bronze → Silver → Gold flow runs end-to-end:
+
+```bash
+python -m src.bronze.run --batch-id demo-1 --raw-root data/sample
+python -m src.silver.run --batch-id demo-1
+python -m src.gold.run    --batch-id demo-1
+```
+
+Each layer is idempotent (re-running succeeds as a no-op) and has
+continue-on-failure semantics (one source's failure doesn't kill the
+batch). The sections below explain each layer in detail.
 
 ### Running Bronze end-to-end
 
@@ -451,6 +546,101 @@ for r in rows:
 Expected: `bronze=30, rejected=1, silver=29`. The math reconciles at
 source grain — the property ADR-0001 and ADR-0006 are designed to
 preserve.
+
+### Running Gold + querying via SQL
+
+After Silver completes, the Gold runner builds all five §6 analytical
+artifacts via DuckDB and materialises them to partitioned Parquet:
+
+```bash
+python -m src.gold.run --batch-id demo-1
+
+# Expected summary at the end:
+#   Gold run summary — batch_id=demo-1
+#     status: success
+#     total rows: 52
+#     per artifact:
+#       top_scorers_by_season         written  rows=12 primary_source=appearances
+#       club_season_summary           written  rows=5  primary_source=games
+#       top_players_all_time          written  rows=12 primary_source=appearances
+#       player_valuation_rolling_avg  written  rows=18 primary_source=player_valuations
+#       club_performance_metrics      written  rows=5  primary_source=games
+```
+
+The artifacts are materialised at `data/lake/gold/<artifact>/batch_id=<id>/`
+in the same Hive-partitioned style as Bronze and Silver. They're
+also queryable via interactive SQL through the DuckDB session:
+
+```bash
+python -c "
+from src.utils.config import get_config
+from src.gold.duckdb_session import gold_session
+
+cfg = get_config()
+with gold_session(silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze) as conn:
+    print('TOP 5 SCORERS:')
+    df = conn.execute('''
+        SELECT player_name, position_canonical, club_name_at_event, total_goals
+        FROM read_parquet(\"data/lake/gold/top_scorers_by_season/**/*.parquet\")
+        ORDER BY total_goals DESC LIMIT 5
+    ''').fetchdf()
+    print(df.to_string(index=False))
+"
+```
+
+You should see Bellingham and Lewandowski tied at the top with 4
+goals each — the brief's §6.1 question answered.
+
+For the most analytically interesting artifact (the rolling-average
+window function):
+
+```bash
+python -c "
+import pandas as pd
+df = pd.read_parquet('data/lake/gold/player_valuation_rolling_avg')
+saka = df[df['player_name'] == 'Bukayo Saka'].sort_values('date')
+print('=== Bukayo Saka valuation trend (90-day rolling avg) ===')
+print(saka[['date','market_value_in_eur','rolling_avg_90d','rolling_sample_count']].to_string(index=False))
+"
+```
+
+Saka's `rolling_avg_90d` rises monotonically as his market value
+increases — proof the DuckDB window function works correctly across
+the partition.
+
+### Full lineage from raw vendor data to analytical aggregates
+
+After all three layers run, the audit table tells the complete story:
+
+```bash
+python -c "
+from src.metadata import audit
+rows = audit.list_batch_files(batch_id='demo-1')
+print(f'{\"source\":20s} {\"bronze\":>7} {\"rejected\":>9} {\"silver\":>7} {\"gold\":>7}')
+for r in rows:
+    print(f'{r.source_name:20s} {r.bronze_row_count or 0:7d} {r.rejected_row_count or 0:9d} {r.silver_row_count or 0:7d} {r.gold_row_count or 0:7d}')
+"
+```
+
+Expected output:
+
+```
+source                bronze  rejected  silver    gold
+appearances               30         1      29      12
+clubs                      5         0       5       0
+competitions               3         0       3       0
+games                      6         0       6       5
+player_valuations         18         0       0      18
+players                   12         0      12       0
+```
+
+Three things this output proves:
+
+1. The orphan `player_id=9999` was caught (rejected=1 for appearances)
+2. Dimensions (`clubs`, `competitions`, `players`) feed into Gold
+   artifacts but aren't primary sources (gold=0 — see ADR-0007)
+3. `player_valuations` follows the Bronze→Gold direct pattern
+   (silver=0, gold=18) deliberately, per ADR-0005
 
 ### Demonstrating idempotency
 
