@@ -52,6 +52,9 @@ from src.engines.factory import get_engine
 from src.ingestion.registry import get_registry
 from src.metadata import audit, runs
 from src.metadata.db import init_db
+from src.dq.quarantine import quarantine_rejected_rows
+from src.dq.report import build_batch_report, build_source_report, write_report
+from src.dq.runner import DQResult, build_fk_lookups, run_dq_for_source
 from src.silver.dimensions import (
     build_dim_clubs,
     build_dim_competitions,
@@ -99,6 +102,7 @@ class SilverRunSummary:
     layer_status: str                # 'success' | 'failed' | 'skipped'
     results: list[SilverBuildResult]
     skipped_layer: bool = False
+    dq_report_path: Path | None = None    # JSON report location, when DQ ran
 
     @property
     def total_rows(self) -> int:
@@ -227,6 +231,8 @@ def _format_summary(summary: SilverRunSummary) -> str:
         lines.append("  (whole layer skipped — already succeeded for this batch)")
         return "\n".join(lines)
     lines.append(f"  total rows: {summary.total_rows}")
+    if summary.dq_report_path is not None:
+        lines.append(f"  dq report:  {summary.dq_report_path}")
     lines.append("  per artifact:")
     width = max((len(r.artifact_name) for r in summary.results), default=12)
     for r in summary.results:
@@ -346,6 +352,99 @@ def run_silver(*, batch_id: str | None = None) -> SilverRunSummary:
 
         runs.mark_started(batch_id, "silver")
 
+        # ===== DQ pass: quarantine bad rows BEFORE Silver consumes ======
+        # Per ADR-0006 (the brief's "DQ as a gate" pattern), DQ runs
+        # between Bronze and Silver. Rows that fail critical rules
+        # never reach Silver — they're written to _rejected/ with a
+        # _dq_failure_reason column, and the audit DAO records
+        # rejected_row_count via record_quarantine.
+        #
+        # We pre-compute clean DataFrames per source ONCE and pass them
+        # into the per-artifact builders. This avoids reading Bronze
+        # multiple times (once per builder) and ensures every artifact
+        # sees the same post-DQ data.
+        clean_bronze: dict[str, DataFrame] = {}
+        dq_results: list[DQResult] = []
+        sources_with_bronze = [
+            "clubs", "competitions", "players", "games", "appearances",
+        ]
+
+        # Pre-build FK lookup sets from Bronze for all FK rules
+        try:
+            fk_lookups = build_fk_lookups(
+                bronze_root=bronze_root, batch_id=batch_id, engine=engine,
+            )
+        except Exception as e:
+            log.error("dq_fk_lookups_failed", error=str(e))
+            fk_lookups = {}
+
+        for src_name in sources_with_bronze:
+            try:
+                bronze_df = _read_bronze(
+                    bronze_root=bronze_root, source_name=src_name,
+                    batch_id=batch_id, engine=engine,
+                )
+            except FileNotFoundError as e:
+                # Bronze partition missing — defer the failure to the
+                # builder closure, which will produce a per-artifact
+                # 'failed' result with a clear error. Don't crash here.
+                log.warning(
+                    "silver_dq_skipped_missing_bronze",
+                    source=src_name, error=str(e),
+                )
+                continue
+
+            try:
+                result = run_dq_for_source(
+                    source_name=src_name, df=bronze_df,
+                    fk_lookups=fk_lookups, engine=engine,
+                )
+                dq_results.append(result)
+                clean_bronze[src_name] = result.clean_rows
+
+                # Quarantine failing rows + record in audit DAO
+                if result.failing_rows is not None and engine.count(result.failing_rows):
+                    quarantine_rejected_rows(
+                        dq_result=result,
+                        rejected_root=cfg.paths.rejected,
+                        batch_id=batch_id, engine=engine,
+                    )
+                    failing_count = engine.count(result.failing_rows)
+                    try:
+                        audit.record_quarantine(
+                            batch_id=batch_id,
+                            source_name=src_name,
+                            rejected_row_count=failing_count,
+                        )
+                    except Exception as e:
+                        log.error(
+                            "audit_record_quarantine_failed",
+                            source=src_name, error=str(e),
+                        )
+            except Exception as e:
+                # DQ itself failing is rare but possible. Fall back to
+                # uncleaned Bronze so the pipeline continues — builders
+                # will then see whatever Bronze contained.
+                log.error("silver_dq_run_failed", source=src_name, error=str(e))
+                clean_bronze[src_name] = bronze_df
+
+        # Write the batch DQ report regardless of success/failure
+        dq_report_path: Path | None = None
+        if dq_results:
+            try:
+                source_reports = [
+                    build_source_report(result=r, engine=engine)
+                    for r in dq_results
+                ]
+                report = build_batch_report(
+                    batch_id=batch_id, source_reports=source_reports,
+                )
+                dq_report_path = write_report(
+                    report=report, output_dir=cfg.paths.dq_reports,
+                )
+            except Exception as e:
+                log.error("dq_report_write_failed", error=str(e))
+
         # ===== Mark each Bronze source as transforming ===================
         # Source-grain audit attribution: every source we'll touch gets
         # mark_transforming up-front. Failures during specific builds
@@ -371,11 +470,13 @@ def run_silver(*, batch_id: str | None = None) -> SilverRunSummary:
 
         # ===== Build dim_clubs ==========================================
         def _build_dim_clubs():
+            if "clubs" not in clean_bronze:
+                # Missing means Bronze read failed earlier; surface clean error
+                raise FileNotFoundError(
+                    f"Bronze partition for 'clubs' missing for batch_id={batch_id}"
+                )
             return build_dim_clubs(
-                bronze_clubs=_read_bronze(
-                    bronze_root=bronze_root, source_name="clubs",
-                    batch_id=batch_id, engine=engine,
-                ),
+                bronze_clubs=clean_bronze["clubs"],
                 engine=engine,
             )
         results.append(_build_artifact_safe(
@@ -386,11 +487,12 @@ def run_silver(*, batch_id: str | None = None) -> SilverRunSummary:
 
         # ===== Build dim_competitions ==================================
         def _build_dim_competitions():
+            if "competitions" not in clean_bronze:
+                raise FileNotFoundError(
+                    f"Bronze partition for 'competitions' missing for batch_id={batch_id}"
+                )
             return build_dim_competitions(
-                bronze_competitions=_read_bronze(
-                    bronze_root=bronze_root, source_name="competitions",
-                    batch_id=batch_id, engine=engine,
-                ),
+                bronze_competitions=clean_bronze["competitions"],
                 engine=engine,
             )
         results.append(_build_artifact_safe(
@@ -423,16 +525,16 @@ def run_silver(*, batch_id: str | None = None) -> SilverRunSummary:
 
         def _build_dim_players():
             nonlocal dim_players_df
+            if "players" not in clean_bronze:
+                raise FileNotFoundError(
+                    f"Bronze partition for 'players' missing for batch_id={batch_id}"
+                )
             players_source = registry.get("players")
             existing = _read_existing_dim_players(
                 silver_root=silver_root, engine=engine,
             )
-            bronze_players = _read_bronze(
-                bronze_root=bronze_root, source_name="players",
-                batch_id=batch_id, engine=engine,
-            )
             merged, _stats = build_dim_players(
-                bronze_players=bronze_players,
+                bronze_players=clean_bronze["players"],
                 existing_dim=existing,
                 players_source=players_source,
                 batch_timestamp=batch_timestamp,
@@ -449,11 +551,12 @@ def run_silver(*, batch_id: str | None = None) -> SilverRunSummary:
 
         # ===== Build fact_games ========================================
         def _build_fact_games():
+            if "games" not in clean_bronze:
+                raise FileNotFoundError(
+                    f"Bronze partition for 'games' missing for batch_id={batch_id}"
+                )
             return build_fact_games(
-                bronze_games=_read_bronze(
-                    bronze_root=bronze_root, source_name="games",
-                    batch_id=batch_id, engine=engine,
-                ),
+                bronze_games=clean_bronze["games"],
                 engine=engine,
             )
         results.append(_build_artifact_safe(
@@ -471,11 +574,12 @@ def run_silver(*, batch_id: str | None = None) -> SilverRunSummary:
                     "fact_appearances requires dim_players, but the "
                     "dim_players build failed earlier in this batch."
                 )
+            if "appearances" not in clean_bronze:
+                raise FileNotFoundError(
+                    f"Bronze partition for 'appearances' missing for batch_id={batch_id}"
+                )
             return build_fact_appearances(
-                bronze_appearances=_read_bronze(
-                    bronze_root=bronze_root, source_name="appearances",
-                    batch_id=batch_id, engine=engine,
-                ),
+                bronze_appearances=clean_bronze["appearances"],
                 dim_players=dim_players_df,
                 engine=engine,
             )
@@ -546,6 +650,7 @@ def run_silver(*, batch_id: str | None = None) -> SilverRunSummary:
             batch_id=batch_id,
             layer_status=layer_status,
             results=results,
+            dq_report_path=dq_report_path,
         )
 
 
