@@ -51,6 +51,7 @@ class GoldArtifact(BaseModel):
     name: str
     sql: str
     sources: list[str]
+    primary_source: str
     description: str
 
 
@@ -61,6 +62,7 @@ class GoldArtifact(BaseModel):
 top_scorers_by_season = GoldArtifact(
     name="top_scorers_by_season",
     sources=["fact_appearances", "dim_players", "dim_clubs"],
+    primary_source="appearances",
     description=(
         "Top scorers per season. One row per (season, player), with "
         "total_goals, total_assists, total_minutes, appearance_count. "
@@ -107,6 +109,7 @@ top_scorers_by_season = GoldArtifact(
 club_season_summary = GoldArtifact(
     name="club_season_summary",
     sources=["fact_games", "dim_clubs"],
+    primary_source="games",
     description=(
         "Per-club, per-season summary. One row per (season, club_id), with "
         "matches_played, wins/draws/losses, goals_for, goals_against, "
@@ -182,6 +185,7 @@ club_season_summary = GoldArtifact(
 top_players_all_time = GoldArtifact(
     name="top_players_all_time",
     sources=["fact_appearances", "dim_players", "dim_clubs"],
+    primary_source="appearances",
     description=(
         "Lifetime totals per player across all seasons. One row per "
         "player, with total_goals, total_assists, total_minutes, "
@@ -242,6 +246,7 @@ top_players_all_time = GoldArtifact(
 player_valuation_rolling_avg = GoldArtifact(
     name="player_valuation_rolling_avg",
     sources=["bronze_player_valuations", "dim_players", "dim_clubs"],
+    primary_source="player_valuations",
     description=(
         "90-day rolling average of player market value. Reads "
         "bronze_player_valuations directly (per ADR-0005, no Silver "
@@ -321,6 +326,7 @@ player_valuation_rolling_avg = GoldArtifact(
 club_performance_metrics = GoldArtifact(
     name="club_performance_metrics",
     sources=["fact_games", "dim_clubs"],
+    primary_source="games",
     description=(
         "Per-club lifetime performance metrics across all seasons. One "
         "row per club_id with matches_played, win_rate, goals_per_game, "

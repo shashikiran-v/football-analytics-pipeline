@@ -98,6 +98,7 @@ class EventType(str, Enum):
     DQ_COMPLETED = "dq_completed"
     SILVER_STARTED = "silver_started"
     SILVER_FINISHED = "silver_finished"
+    GOLD_FINISHED = "gold_finished"
     RECONCILED = "reconciled"
     FAILED = "failed"
     SCHEMA_DRIFT_DETECTED = "schema_drift_detected"
@@ -155,6 +156,7 @@ class AuditRow:
     bronze_row_count: int | None
     silver_row_count: int | None
     rejected_row_count: int | None
+    gold_row_count: int | None
     status: FileStatus
     registered_at: str
     started_at: str | None
@@ -178,6 +180,7 @@ class AuditRow:
             bronze_row_count=row["bronze_row_count"],
             silver_row_count=row["silver_row_count"],
             rejected_row_count=row["rejected_row_count"],
+            gold_row_count=row["gold_row_count"],
             status=FileStatus(row["status"]),
             registered_at=row["registered_at"],
             started_at=row["started_at"],
@@ -636,6 +639,73 @@ def record_silver_complete(
         except Exception:
             conn.execute("ROLLBACK")
             raise
+
+
+def record_gold_complete(
+    *,
+    batch_id: str,
+    source_name: str,
+    gold_row_count: int,
+) -> None:
+    """
+    Records Gold artifact build success at source-grain.
+
+    Unlike record_silver_complete, this does NOT change file status —
+    Gold is an analytical view over already-TRANSFORMED data, not a
+    new lifecycle stage. The data's "lifecycle" is complete at
+    TRANSFORMED; Gold just derives aggregates from it.
+
+    Two subtleties worth noting:
+
+    1. gold_row_count is set for the PRIMARY Bronze source of the
+       Gold artifact (per ADR-0005's source-grain attribution pattern).
+       For top_scorers_by_season this is 'appearances'; for
+       player_valuation_rolling_avg it's 'player_valuations'.
+
+    2. player_valuations doesn't pass through Silver (it has no
+       Silver builder). Its audit row stays at INGESTED status but
+       gets a gold_row_count populated, which is the intentional
+       lineage record for Bronze→Gold direct sources.
+
+    Emits 'gold_finished' event on every file of this source for the batch.
+    """
+    with connect() as conn:
+        conn.execute("BEGIN")
+        try:
+            file_rows = conn.execute(
+                """
+                SELECT source_file_path FROM file_audit
+                WHERE batch_id=? AND source_name=?
+                """,
+                (batch_id, source_name),
+            ).fetchall()
+            if not file_rows:
+                raise AuditStateError(
+                    f"No files registered for source={source_name} in batch={batch_id}"
+                )
+            now = _utcnow()
+            conn.execute(
+                """
+                UPDATE file_audit SET
+                    gold_row_count=?,
+                    finished_at=?
+                WHERE batch_id=? AND source_name=?
+                """,
+                (gold_row_count, now, batch_id, source_name),
+            )
+            for r in file_rows:
+                _emit_event(
+                    conn,
+                    batch_id=batch_id,
+                    source_file_path=r["source_file_path"],
+                    event_type=EventType.GOLD_FINISHED,
+                    payload={"gold_row_count": gold_row_count},
+                )
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+
 
 
 def mark_failed(

@@ -92,6 +92,9 @@ CREATE TABLE IF NOT EXISTS scd_watermarks (
 --   bronze_row_count  : rows written to Bronze parquet (after schema enforcement)
 --   silver_row_count  : rows that survived DQ + transforms into Silver
 --   rejected_row_count: rows quarantined by DQ (so bronze = silver + rejected)
+--   gold_row_count    : rows in this source's primary Gold artifact (per
+--                       ADR-0007's source-grain attribution: each Gold
+--                       artifact attributes to ONE Bronze source)
 --
 -- Timestamp semantics (see ADR-0001):
 --   source_modified_at_vendor    : vendor's authoritative "last changed"
@@ -117,6 +120,7 @@ CREATE TABLE IF NOT EXISTS file_audit (
     bronze_row_count               INTEGER,
     silver_row_count               INTEGER,
     rejected_row_count             INTEGER,
+    gold_row_count                 INTEGER,
 
     -- Status & timing
     status                         TEXT NOT NULL,   -- see FileStatus enum in audit.py
@@ -171,14 +175,40 @@ def init_db(db_path: Path | None = None) -> Path:
     Create the metadata DB and apply the schema. Safe to call repeatedly —
     every statement uses IF NOT EXISTS.
 
+    Also handles forward-compatible column additions for users running
+    pipelines that started before Phase 5 (gold_row_count is one such
+    column). See `_apply_migrations` below for details.
+
     Returns the resolved path so callers can log it.
     """
     path = db_path or get_config().paths.metadata_db
     _ensure_dir(path)
     with connect(path) as conn:
         conn.executescript(SCHEMA)
+        _apply_migrations(conn)
     log.info("metadata_db_initialised", path=str(path))
     return path
+
+
+def _apply_migrations(conn: sqlite3.Connection) -> None:
+    """
+    Apply forward-compatible schema migrations for existing DBs.
+
+    `CREATE TABLE IF NOT EXISTS` doesn't add new columns when the table
+    already exists from an earlier run. For each column we've added
+    since the original schema, we check `PRAGMA table_info` and
+    `ALTER TABLE ADD COLUMN` if needed.
+
+    This is the minimal migration system — for a real warehouse we'd
+    use Alembic or similar. For a single-table-evolution case like
+    Phase 5's gold_row_count, this is proportional.
+    """
+    existing_cols = {
+        row["name"] for row in conn.execute("PRAGMA table_info(file_audit)").fetchall()
+    }
+    if "gold_row_count" not in existing_cols:
+        conn.execute("ALTER TABLE file_audit ADD COLUMN gold_row_count INTEGER")
+        log.info("metadata_db_migrated", change="added file_audit.gold_row_count")
 
 
 @contextmanager
