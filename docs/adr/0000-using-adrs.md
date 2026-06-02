@@ -70,6 +70,8 @@ old one's Status field to reflect that.
 | 0001   | Audit Table Design                  | Accepted |
 | 0002   | Source Registry as a Framework      | Accepted |
 | 0003   | Bronze Storage and Partitioning     | Accepted |
+| 0004   | Silver Transformation Strategy      | Accepted |
+| 0005   | SCD Type 2 Implementation           | Accepted |
 
-Future phases will add ADRs covering Pandas-vs-Spark scope, DQ failure
-semantics, idempotency mechanisms, and Gold-layer storage choices.
+Future phases will add ADRs covering DQ failure semantics, Gold-layer
+storage choices, and Spark engine scope.

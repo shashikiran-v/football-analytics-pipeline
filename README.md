@@ -87,8 +87,8 @@ project/
 | 1     | Foundation: config, logging, metadata, engine abstraction + Pandas | ✅ Done |
 | 2a    | Source registry framework + audit infrastructure + ADRs | ✅ Done |
 | 2b    | Bronze ingestion + sample data + Kaggle manifest    | ✅ Done  |
-| 3     | Silver: transforms, star-schema dimensions, SCD2   | ⏳ Next  |
-| 4     | DQ framework + quarantine + report                 | ⏳       |
+| 3     | Silver: transforms, star-schema dimensions, SCD Type 2 | ✅ Done  |
+| 4     | DQ framework + quarantine + report                 | ⏳ Next  |
 | 5     | Gold aggregations + DuckDB views                   | ⏳       |
 | 6     | Day-2 incremental snapshot + SCD2 validation       | ⏳       |
 | 7     | Spark engine: stub + design doc *(not fully built — cost-aware choice)* | ⏳ |
@@ -157,6 +157,64 @@ lineage in `data/metadata.db`.
 Total test count after Phase 2b: **170 passing, 1 skipped**
 (adds: samples 13+1, manifest 12, file_loader 17, bronze 18).
 
+### What's in Phase 3
+
+- **Silver transformations** (`src/silver/transforms.py` + reference
+  YAMLs): four pure functions implementing the brief's required
+  normalisations — position to a defined taxonomy, country to ISO
+  3166-1 alpha-2, match outcome from goals, football season from date.
+  Engine-agnostic via `engine.with_derived_column`; tolerant of
+  null/empty/unknown input (returns sentinels rather than raising).
+  Reference data lives in `configs/position_taxonomy.yaml` and
+  `configs/country_iso.yaml` — adding new variants is a YAML edit.
+- **SCD Type 2 merge** (`src/silver/scd2.py`): hash-based 4-category
+  merge engine (NEW / CHANGED / UNCHANGED / HISTORICAL). Engine-agnostic
+  via `engine.with_row_hash`. Auto-incremented integer surrogate keys,
+  allocated deterministically by natural-key sort order so replays
+  yield identical state. The most consequential function in the
+  codebase; 17 dedicated tests cover every category and the cardinal
+  "historical rows never mutated" rule across three batch cycles.
+- **Dimension builders** (`src/silver/dimensions.py`): four builders.
+  Type-1 for clubs and competitions (latest snapshot, dedupe on
+  natural key). Generated `dim_date` covering 2018–2030 with football
+  season derivation. Type-2 `dim_players` driven by registry config —
+  `natural_key` and `tracked_columns` come from `sources.yaml`, not
+  hardcoded. First-run effective_date is FAR_PAST_DATE (`1900-01-01`)
+  so as-of-event fact joins resolve for historical match dates.
+- **Fact builders** (`src/silver/facts.py`): `fact_games` (with
+  derived outcome, season, date_key) and `fact_appearances` with the
+  **as-of-event FK resolution to dim_players** — the differentiating
+  use of SCD2. For each appearance, finds the dim_players version
+  whose `[effective_date, end_date]` window contains the match date.
+  Validated by `test_as_of_event_picks_correct_version`: two dim
+  versions for one player, matches on each side of the transfer
+  resolve to the correct version.
+- **Silver CLI runner** (`src/silver/run.py`): orchestrates Bronze reads,
+  dim/fact builds, Silver writes, and audit DAO lifecycle through
+  `mark_transforming` → `record_silver_complete`. Layer-grain
+  idempotency, continue-on-failure semantics. After this layer, one
+  command per layer produces the full pipeline:
+  ```bash
+  python -m src.bronze.run --batch-id demo-1 --raw-root data/sample
+  python -m src.silver.run --batch-id demo-1
+  ```
+- **ADR-0004 and ADR-0005**: architectural records for the
+  transformation strategy and SCD2 implementation. ADR-0005 in
+  particular documents every consequential SCD2 decision with
+  alternatives rejected — hash-based merge over column-by-column,
+  integer surrogate keys over hash-based (with the trade-off
+  acknowledged), as-of-event facts over always-current FK,
+  source-grain audit attribution over joint or per-artifact.
+
+After Phase 3, the pipeline produces business-ready dimensional data
+with full SCD2 history and as-of-event fact joins. Real Parquet on
+disk, real audit lineage in SQLite, ready for DQ (Phase 4) and Gold
+aggregations (Phase 5).
+
+Total test count after Phase 3: **283 passing, 1 skipped**
+(adds: silver_transforms 52, scd2 17, dimensions 17, facts 12,
+silver_run 15).
+
 ---
 
 ## Running the pipeline
@@ -208,6 +266,76 @@ python -m src.bronze.run --batch-id demo-1 --raw-root data/sample
 # Inspect what was produced
 find data/lake/bronze -type f -name '*.parquet' | sort
 ```
+
+### Running Silver end-to-end
+
+After Bronze has populated `data/lake/bronze/` for a given `batch_id`,
+Silver builds dimensions and facts on top of it:
+
+```bash
+# Run Silver against the Bronze data from the previous command
+python -m src.silver.run --batch-id demo-1
+
+# Expected summary at the end:
+#   Silver run summary — batch_id=demo-1
+#     status: success
+#     total rows: 4804         (dim_date dominates; other artifacts ~50 rows)
+#     per artifact:
+#       dim_clubs         written   rows=5
+#       dim_competitions  written   rows=3
+#       dim_date          written   rows=4748
+#       dim_players       written   rows=12
+#       fact_games        written   rows=6
+#       fact_appearances  written   rows=30
+
+# Inspect what was produced
+find data/lake/silver -maxdepth 2 -type d | sort
+```
+
+You should see one directory per Silver artifact, each Hive-partitioned
+by `batch_id`. The output mirrors Bronze's layout, plus the four
+dimensions and two facts.
+
+### Verifying SCD Type 2 with as-of-event resolution
+
+The single most differentiating piece of the pipeline is SCD Type 2
+with fact joins that resolve to the correct version at the time of
+the match. After Silver runs, you can verify this directly:
+
+```bash
+python -c "
+import pandas as pd
+fact = pd.read_parquet('data/lake/silver/fact_appearances')
+print(f'Total appearances: {len(fact)}')
+print(f'Resolved player_sk: {fact[\"player_sk\"].notna().sum()}')
+print(f'Unresolved (orphan): {fact[\"player_sk\"].isna().sum()}')
+print()
+print('Orphan appearance (deliberate seed for DQ to catch):')
+print(fact[fact['player_sk'].isna()][['appearance_id', 'player_id', 'date']].to_string(index=False))
+"
+```
+
+Expected output:
+- **30 total appearances**
+- **29 resolved player_sk** (every legitimate appearance correctly
+  joined to its dim_players version)
+- **1 unresolved**: player_id=9999, the deliberate orphan FK we
+  seeded in the sample data for DQ to catch
+
+The audit DAO accurately reflects this throughout:
+
+```bash
+python -c "
+from src.metadata import audit
+rows = audit.list_batch_files(batch_id='demo-1')
+for r in rows:
+    print(f'{r.source_name:20s} {r.status.value:14s} silver_rows={r.silver_row_count}')
+"
+```
+
+Five sources reach `transformed` status with accurate silver row counts;
+`player_valuations` stays at `ingested` (no Silver builder consumes it;
+Phase 5's Gold layer queries it directly from Bronze).
 
 ### Demonstrating idempotency
 
