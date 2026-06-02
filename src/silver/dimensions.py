@@ -70,6 +70,14 @@ log = get_logger(__name__)
 # writing to Silver (it's a Bronze concern, not a Silver concern).
 BRONZE_BATCH_COLUMN = "batch_id"
 
+# Sentinel effective_date used for the INITIAL load of an SCD2 dim. The
+# semantics: "this version has been known since forever" — so as-of-event
+# joins from facts resolve for any historical match date in the source.
+# Subsequent versions get the actual batch_timestamp.
+# Picked to be far enough in the past that no realistic source data
+# predates it. Date (not datetime) to match end_date FAR_FUTURE_DATE.
+FAR_PAST_DATE = "1900-01-01"
+
 
 # ---------------------------------------------------------------------------
 # Type-1 dimensions
@@ -273,6 +281,18 @@ def build_dim_players(
     silver_cols = [c for c in engine.columns(transformed) if c != BRONZE_BATCH_COLUMN]
     projected = engine.select(transformed, silver_cols)
 
+    # --- Effective-date convention for first-run vs subsequent runs ----
+    # For the FIRST run, set effective_date to a far-past sentinel so
+    # as-of-event fact joins resolve correctly for any historical match
+    # date in the source data. The "always known" semantics is the
+    # standard warehouse pattern for initial loads.
+    # For SUBSEQUENT runs (CHANGED rows), use the actual batch_timestamp
+    # — that's when the change was observed.
+    if existing_dim is None:
+        effective_ts = FAR_PAST_DATE
+    else:
+        effective_ts = batch_timestamp
+
     # --- Delegate to scd2_merge ----------------------------------------
     natural_key = players_source.primary_key
     tracked = players_source.scd2.tracked_columns
@@ -285,6 +305,7 @@ def build_dim_players(
         incoming_rows=engine.count(projected),
         existing_rows=engine.count(existing_dim) if existing_dim is not None else 0,
         batch_timestamp=batch_timestamp,
+        effective_timestamp=effective_ts,
     )
 
     merged, stats = scd2_merge(
@@ -293,7 +314,7 @@ def build_dim_players(
         natural_key=natural_key,
         tracked_columns=tracked,
         surrogate_key_column=surrogate_key,
-        batch_timestamp=batch_timestamp,
+        batch_timestamp=effective_ts,
         engine=engine,
     )
 
