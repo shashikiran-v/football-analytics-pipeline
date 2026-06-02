@@ -22,8 +22,11 @@ import pytest
 from src.bronze.run import run_bronze
 from src.gold.artifacts import (
     ALL_ARTIFACTS,
+    club_performance_metrics,
     club_season_summary,
     get_artifact,
+    player_valuation_rolling_avg,
+    top_players_all_time,
     top_scorers_by_season,
 )
 from src.gold.builders import build_gold_artifact
@@ -239,3 +242,190 @@ class TestGoldBuilder:
         # The result should expose the source views the artifact reads
         assert "fact_appearances" in result.sources
         assert "dim_players" in result.sources
+
+
+# ---------------------------------------------------------------------------
+# top_players_all_time
+# ---------------------------------------------------------------------------
+
+
+class TestTopPlayersAllTime:
+    def test_one_row_per_player(self, silver_seeded):
+        cfg = get_config()
+        with gold_session(
+            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+        ) as conn:
+            df = conn.execute(top_players_all_time.sql).fetchdf()
+        # 12 players in samples, all appear in fact_appearances
+        assert len(df) == 12
+        assert df["player_id"].is_unique
+
+    def test_lifetime_aggregates_match(self, silver_seeded):
+        """Lifetime totals must match per-season totals summed across seasons.
+        Pinned values: Bellingham 4 goals in 3 apps; Lewandowski 4 in 2."""
+        cfg = get_config()
+        with gold_session(
+            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+        ) as conn:
+            df = conn.execute(top_players_all_time.sql).fetchdf()
+        bellingham = df[df["player_name"] == "Jude Bellingham"].iloc[0]
+        assert int(bellingham["total_goals"]) == 4
+        assert int(bellingham["appearance_count"]) == 3
+        lewandowski = df[df["player_name"] == "Robert Lewandowski"].iloc[0]
+        assert int(lewandowski["total_goals"]) == 4
+        assert int(lewandowski["appearance_count"]) == 2
+
+    def test_goals_per_appearance_math(self, silver_seeded):
+        """goals_per_appearance = total_goals / appearance_count, always."""
+        cfg = get_config()
+        with gold_session(
+            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+        ) as conn:
+            df = conn.execute(top_players_all_time.sql).fetchdf()
+        for _, row in df.iterrows():
+            expected = row["total_goals"] / row["appearance_count"]
+            assert abs(row["goals_per_appearance"] - expected) < 1e-9
+
+    def test_joins_to_current_dim_player_only(self, silver_seeded):
+        """Lifetime aggregates use the CURRENT dim row (is_current=True).
+        Samples have all-current rows so this is trivially satisfied; but
+        the JOIN clause means a future multi-version dim won't double-count."""
+        cfg = get_config()
+        with gold_session(
+            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+        ) as conn:
+            df = conn.execute(top_players_all_time.sql).fetchdf()
+        # Still 12 rows (one per player_id); JOIN didn't duplicate
+        assert len(df) == 12
+
+
+# ---------------------------------------------------------------------------
+# player_valuation_rolling_avg
+# ---------------------------------------------------------------------------
+
+
+class TestPlayerValuationRollingAvg:
+    def test_row_per_valuation_observation(self, silver_seeded):
+        """One row per (player_id, date) — same cardinality as Bronze
+        player_valuations after filtering nulls."""
+        cfg = get_config()
+        with gold_session(
+            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+        ) as conn:
+            df = conn.execute(player_valuation_rolling_avg.sql).fetchdf()
+        # Samples have 18 valuations across multiple players
+        assert len(df) == 18
+
+    def test_first_observation_per_player_equals_market_value(self, silver_seeded):
+        """The rolling avg of a single observation IS the observation."""
+        cfg = get_config()
+        with gold_session(
+            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+        ) as conn:
+            df = conn.execute(player_valuation_rolling_avg.sql).fetchdf()
+        # Find each player's first observation (rolling_sample_count == 1)
+        first_obs = df[df["rolling_sample_count"] == 1]
+        for _, row in first_obs.iterrows():
+            assert row["rolling_avg_90d"] == row["market_value_in_eur"]
+
+    def test_rolling_avg_increases_with_rising_market_value(self, silver_seeded):
+        """Saka's market value rises 110M → 115M → 120M; rolling avg should
+        rise monotonically too."""
+        cfg = get_config()
+        with gold_session(
+            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+        ) as conn:
+            df = conn.execute(player_valuation_rolling_avg.sql).fetchdf()
+        saka = df[df["player_name"] == "Bukayo Saka"].sort_values("date")
+        rolling_vals = saka["rolling_avg_90d"].tolist()
+        assert rolling_vals == sorted(rolling_vals), (
+            f"Rolling avg not monotonically increasing: {rolling_vals}"
+        )
+
+    def test_scd2_as_of_join_resolved(self, silver_seeded):
+        """Every valuation should resolve to a dim_players version
+        (player_sk not null). In samples, dim_players has effective_date
+        FAR_PAST_DATE so every historical valuation window is covered."""
+        cfg = get_config()
+        with gold_session(
+            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+        ) as conn:
+            df = conn.execute(player_valuation_rolling_avg.sql).fetchdf()
+        # Every row should have a resolved player_sk
+        assert df["player_sk"].notna().all(), (
+            f"{df['player_sk'].isna().sum()} valuations unresolved to dim_players"
+        )
+
+
+# ---------------------------------------------------------------------------
+# club_performance_metrics
+# ---------------------------------------------------------------------------
+
+
+class TestClubPerformanceMetrics:
+    def test_one_row_per_club(self, silver_seeded):
+        cfg = get_config()
+        with gold_session(
+            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+        ) as conn:
+            df = conn.execute(club_performance_metrics.sql).fetchdf()
+        # 5 clubs in samples
+        assert len(df) == 5
+        assert df["club_id"].is_unique
+
+    def test_clean_sheet_count(self, silver_seeded):
+        """Arsenal has the only clean sheet in the samples."""
+        cfg = get_config()
+        with gold_session(
+            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+        ) as conn:
+            df = conn.execute(club_performance_metrics.sql).fetchdf()
+        arsenal = df[df["club_name"] == "Arsenal FC"].iloc[0]
+        assert int(arsenal["clean_sheets"]) == 1
+        # Other clubs have 0 clean sheets in samples
+        others = df[df["club_name"] != "Arsenal FC"]
+        assert (others["clean_sheets"] == 0).all()
+
+    def test_win_rate_math(self, silver_seeded):
+        """win_rate = wins / matches_played, always."""
+        cfg = get_config()
+        with gold_session(
+            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+        ) as conn:
+            df = conn.execute(club_performance_metrics.sql).fetchdf()
+        for _, row in df.iterrows():
+            expected = row["wins"] / row["matches_played"]
+            assert abs(row["win_rate"] - expected) < 1e-9, (
+                f"Bad win_rate math for {row['club_name']}: "
+                f"{row['win_rate']} != {row['wins']}/{row['matches_played']}"
+            )
+
+    def test_clean_sheet_rate_math(self, silver_seeded):
+        """clean_sheet_rate = clean_sheets / matches_played, always."""
+        cfg = get_config()
+        with gold_session(
+            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+        ) as conn:
+            df = conn.execute(club_performance_metrics.sql).fetchdf()
+        for _, row in df.iterrows():
+            expected = row["clean_sheets"] / row["matches_played"]
+            assert abs(row["clean_sheet_rate"] - expected) < 1e-9
+
+
+# ---------------------------------------------------------------------------
+# Registry coverage post-5.2
+# ---------------------------------------------------------------------------
+
+
+class TestPhase5RegistryComplete:
+    def test_all_five_brief_artifacts_registered(self):
+        """The brief's §6 names five analytical questions; we must have
+        all five Gold artifacts registered."""
+        names = {a.name for a in ALL_ARTIFACTS}
+        assert names == {
+            "top_scorers_by_season",       # §6.1
+            "club_season_summary",         # §6.2
+            "top_players_all_time",        # §6.3
+            "player_valuation_rolling_avg", # §6.4
+            "club_performance_metrics",    # §6.5
+        }
