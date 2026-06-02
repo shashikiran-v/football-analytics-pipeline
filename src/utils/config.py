@@ -75,6 +75,7 @@ class PIIConfig(_Frozen):
 class ReferenceConfig(_Frozen):
     position_taxonomy: str
     country_iso: str
+    dq_rules: str
 
 
 class LoggingConfig(_Frozen):

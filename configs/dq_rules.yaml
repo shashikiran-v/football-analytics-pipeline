@@ -1,0 +1,217 @@
+# =====================================================================
+# Data Quality Rules
+# ---------------------------------------------------------------------
+# Declarative DQ rule definitions per source. Loaded once per process
+# by src/dq/rules.py; the DQ runner executes them against Bronze data
+# before Silver consumes it.
+#
+# Rule types supported (each maps to a Pydantic model in rules.py):
+#   not_null       column(s) must not be null
+#   range          numeric column must satisfy min/max bounds (inclusive)
+#   unique         column(s) must form a unique key
+#   foreign_key    column must reference a value in another source
+#   schema         columns must match declared types and nullability
+#
+# Severity:
+#   critical       failing rows are quarantined to _rejected/
+#   warning        failing rows pass through to Silver; logged + reported
+#
+# Adding a rule is a YAML edit; no Python change required. Adding a NEW
+# rule TYPE is a Python addition to rules.py (new Pydantic model +
+# evaluate implementation).
+#
+# Format
+#   version: <int>
+#   rules:
+#     - source: <source_name>
+#       rule_type: <type>
+#       <type-specific parameters>
+#       severity: critical | warning
+#       description: optional human note
+# =====================================================================
+
+version: 1
+
+rules:
+  # ===== competitions =====
+  - source: competitions
+    rule_type: not_null
+    columns: [competition_id, name]
+    severity: critical
+    description: "Primary key and display name must be populated"
+
+  - source: competitions
+    rule_type: unique
+    columns: [competition_id]
+    severity: critical
+    description: "competition_id must be unique within the source"
+
+  # ===== clubs =====
+  - source: clubs
+    rule_type: not_null
+    columns: [club_id, name, domestic_competition_id]
+    severity: critical
+    description: "Primary key, name, and competition FK must be populated"
+
+  - source: clubs
+    rule_type: unique
+    columns: [club_id]
+    severity: critical
+
+  - source: clubs
+    rule_type: foreign_key
+    column: domestic_competition_id
+    references_source: competitions
+    references_column: competition_id
+    severity: critical
+    description: "Every club's competition must exist in competitions"
+
+  - source: clubs
+    rule_type: range
+    column: squad_size
+    min: 0
+    max: 200
+    severity: warning
+    description: "Squad size implausible if outside this range"
+
+  # ===== players =====
+  - source: players
+    rule_type: not_null
+    columns: [player_id, name, current_club_id]
+    severity: critical
+
+  - source: players
+    rule_type: unique
+    columns: [player_id]
+    severity: critical
+
+  - source: players
+    rule_type: foreign_key
+    column: current_club_id
+    references_source: clubs
+    references_column: club_id
+    severity: critical
+    description: "Every player must have a current club that exists in clubs"
+
+  - source: players
+    rule_type: range
+    column: market_value_in_eur
+    min: 0
+    max: 500_000_000
+    severity: warning
+    description: "Market value below 0 is invalid; above 500M is implausible"
+
+  # ===== games =====
+  - source: games
+    rule_type: not_null
+    columns: [game_id, date, home_club_id, away_club_id]
+    severity: critical
+
+  - source: games
+    rule_type: unique
+    columns: [game_id]
+    severity: critical
+
+  - source: games
+    rule_type: foreign_key
+    column: home_club_id
+    references_source: clubs
+    references_column: club_id
+    severity: critical
+
+  - source: games
+    rule_type: foreign_key
+    column: away_club_id
+    references_source: clubs
+    references_column: club_id
+    severity: critical
+
+  - source: games
+    rule_type: foreign_key
+    column: competition_id
+    references_source: competitions
+    references_column: competition_id
+    severity: critical
+
+  - source: games
+    rule_type: range
+    column: home_club_goals
+    min: 0
+    max: 30
+    severity: warning
+
+  - source: games
+    rule_type: range
+    column: away_club_goals
+    min: 0
+    max: 30
+    severity: warning
+
+  # ===== appearances =====
+  - source: appearances
+    rule_type: not_null
+    columns: [appearance_id, player_id, game_id, date]
+    severity: critical
+
+  - source: appearances
+    rule_type: unique
+    columns: [appearance_id]
+    severity: critical
+
+  # THIS is the rule that catches our deliberate orphan player_id=9999
+  - source: appearances
+    rule_type: foreign_key
+    column: player_id
+    references_source: players
+    references_column: player_id
+    severity: critical
+    description: "Every appearance must reference a known player (this catches orphans)"
+
+  - source: appearances
+    rule_type: foreign_key
+    column: game_id
+    references_source: games
+    references_column: game_id
+    severity: critical
+
+  - source: appearances
+    rule_type: range
+    column: minutes_played
+    min: 0
+    max: 120
+    severity: warning
+    description: "Minutes played should be 0-120 (90 + extra time + injury time)"
+
+  - source: appearances
+    rule_type: range
+    column: goals
+    min: 0
+    max: 10
+    severity: warning
+
+  - source: appearances
+    rule_type: range
+    column: assists
+    min: 0
+    max: 10
+    severity: warning
+
+  # ===== player_valuations =====
+  - source: player_valuations
+    rule_type: not_null
+    columns: [player_id, date, market_value_in_eur]
+    severity: critical
+
+  - source: player_valuations
+    rule_type: foreign_key
+    column: player_id
+    references_source: players
+    references_column: player_id
+    severity: critical
+
+  - source: player_valuations
+    rule_type: range
+    column: market_value_in_eur
+    min: 0
+    max: 500_000_000
+    severity: warning

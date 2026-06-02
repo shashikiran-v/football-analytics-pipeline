@@ -75,6 +75,7 @@ pii:
 reference:
   position_taxonomy: configs/position_taxonomy.yaml
   country_iso:       configs/country_iso.yaml
+  dq_rules:          configs/dq_rules.yaml
 
 # Logging.
 logging:
