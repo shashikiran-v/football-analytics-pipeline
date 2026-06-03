@@ -907,10 +907,28 @@ def find_most_recent_ingestion_for_source(
     partition doesn't exist on disk — typically because file-grain
     idempotency skipped re-writing identical bytes (ADR-0003).
 
-    If `as_of_batch_id` is provided, returns the most-recent ingestion
-    for that batch OR earlier (i.e. never returns audit rows from
-    batches AFTER the as_of point). For day-2 reading day-1 data,
-    as_of_batch_id should be the current batch.
+    Ordering semantics
+    ------------------
+    "Most recent" is defined by `registered_at` timestamp, NOT by
+    batch_id. This matters because batch_ids in production can be
+    heterogeneous strings — `day-1`, `2026-06-02`, `manual-2026-06-03`,
+    etc. — that DON'T sort lexicographically the way you'd expect.
+    `"day-2"` is lexicographically GREATER than `"2026-06-02"` (ASCII
+    'd' is 0x64; '2' is 0x32), which would cause an `as_of_batch_id`
+    filter using `batch_id <=` to wrongly exclude later-named-but-
+    earlier-registered batches.
+
+    `registered_at` is always an ISO-8601 UTC timestamp produced by
+    `_utcnow()`, so lexicographic ordering matches chronological
+    ordering by construction. This was a real bug found during Phase 8
+    Airflow integration; the fix and the test that pins it are
+    documented in ADR-0008 (cross-batch semantics) and Slice 8.1b.
+
+    If `as_of_batch_id` is provided, we look up the current batch's
+    registered_at timestamp, then filter to audit rows with
+    registered_at <= that timestamp. For Airflow's scheduled batches
+    this is exactly "ingestions that happened at-or-before this
+    batch's registration".
 
     Returns None if no successful ingestion exists for this source.
     Callers decide what to do (raise an error, return empty data,
@@ -940,23 +958,61 @@ def find_most_recent_ingestion_for_source(
                 ),
             ).fetchone()
         else:
-            row = conn.execute(
+            # Look up the registered_at of the as_of batch first.
+            # Using MAX so multi-file sources resolve to the latest
+            # registration in that batch.
+            as_of_ts_row = conn.execute(
                 """
-                SELECT * FROM file_audit
-                WHERE source_name = ?
-                  AND status IN (?, ?, ?)
-                  AND batch_id <= ?
-                ORDER BY registered_at DESC
-                LIMIT 1
+                SELECT MAX(registered_at) AS registered_at
+                FROM file_audit
+                WHERE batch_id = ?
                 """,
-                (
-                    source_name,
-                    FileStatus.INGESTED.value,
-                    FileStatus.TRANSFORMING.value,
-                    FileStatus.TRANSFORMED.value,
-                    as_of_batch_id,
-                ),
+                (as_of_batch_id,),
             ).fetchone()
+            as_of_ts = (
+                as_of_ts_row["registered_at"] if as_of_ts_row else None
+            )
+
+            if as_of_ts is None:
+                # No audit rows for the as_of batch yet — fall through
+                # to the all-batches query. This happens if a Silver
+                # task somehow runs without its Bronze counterpart
+                # having registered ANY files yet. Conservative
+                # behaviour: return the most-recent successful
+                # ingestion regardless of batch ordering.
+                row = conn.execute(
+                    """
+                    SELECT * FROM file_audit
+                    WHERE source_name = ?
+                      AND status IN (?, ?, ?)
+                    ORDER BY registered_at DESC
+                    LIMIT 1
+                    """,
+                    (
+                        source_name,
+                        FileStatus.INGESTED.value,
+                        FileStatus.TRANSFORMING.value,
+                        FileStatus.TRANSFORMED.value,
+                    ),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    """
+                    SELECT * FROM file_audit
+                    WHERE source_name = ?
+                      AND status IN (?, ?, ?)
+                      AND registered_at <= ?
+                    ORDER BY registered_at DESC
+                    LIMIT 1
+                    """,
+                    (
+                        source_name,
+                        FileStatus.INGESTED.value,
+                        FileStatus.TRANSFORMING.value,
+                        FileStatus.TRANSFORMED.value,
+                        as_of_ts,
+                    ),
+                ).fetchone()
         return AuditRow.from_sqlite_row(row) if row else None
 
 

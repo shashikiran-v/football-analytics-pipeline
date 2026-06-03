@@ -26,7 +26,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from src.metadata import audit
-from src.metadata.audit import AuditRow, FileStatus
+from src.metadata.audit import FileStatus
 from src.metadata.db import connect
 from src.utils.logging import get_logger
 
@@ -34,29 +34,32 @@ from src.utils.logging import get_logger
 log = get_logger(__name__)
 
 
-def _find_prior_ingestion_by_checksum_excluding_batch(
+def _find_all_batches_with_checksum(
     *,
     checksum_md5: str,
     excluded_batch_id: str,
-) -> AuditRow | None:
+) -> list[str]:
     """
-    Find a successful ingestion of the given checksum from any batch
-    OTHER than the excluded one. Used by the resolver to follow a
-    file-grain-skip back to the batch where the data actually lives
-    on disk (the skipped batch records the same checksum but no
-    parquet was written).
+    Return all batch_ids that have a successful ingestion of the given
+    checksum, EXCLUDING the named batch. Ordered most-recent-first.
 
-    Returns the most recently registered prior batch, or None.
+    Used by the resolver to walk back through a chain of file-grain
+    skips: when the current batch's file was skipped (matching some
+    prior batch), the data lives wherever the chain's first 'written'
+    ingestion put it. We don't know that batch_id in advance, so we
+    try each candidate (most recent first) and return the first one
+    whose partition exists on disk.
     """
     with connect() as conn:
-        row = conn.execute(
+        rows = conn.execute(
             """
-            SELECT * FROM file_audit
+            SELECT DISTINCT batch_id, MAX(registered_at) as registered_at
+            FROM file_audit
             WHERE file_checksum_md5 = ?
               AND batch_id != ?
               AND status IN (?, ?, ?)
+            GROUP BY batch_id
             ORDER BY registered_at DESC
-            LIMIT 1
             """,
             (
                 checksum_md5,
@@ -65,8 +68,8 @@ def _find_prior_ingestion_by_checksum_excluding_batch(
                 FileStatus.TRANSFORMING.value,
                 FileStatus.TRANSFORMED.value,
             ),
-        ).fetchone()
-        return AuditRow.from_sqlite_row(row) if row else None
+        ).fetchall()
+        return [r["batch_id"] for r in rows]
 
 
 def resolve_bronze_partition(
@@ -108,8 +111,9 @@ def resolve_bronze_partition(
 
     # Current-batch partition missing. The source either (a) wasn't
     # ingested in this batch at all, or (b) was file-grain-skipped
-    # because of identical bytes from a prior batch. Find the current
-    # batch's audit row (if any) to get the checksum.
+    # because of identical bytes from a prior batch. Find the most
+    # recent successful ingestion of this source at-or-before this
+    # batch to get the file's checksum.
     current_audit = audit.find_most_recent_ingestion_for_source(
         source_name=source_name,
         as_of_batch_id=batch_id,
@@ -123,49 +127,49 @@ def resolve_bronze_partition(
         )
         return None
 
-    # If the audit DAO points us at a batch that's DIFFERENT from the
-    # current one, that's the file-grain-skip case — the data lives
-    # under the prior batch. If it's the SAME batch, the data should
-    # be on disk (we already checked) — so this case is a real gap.
-    if current_audit.batch_id == batch_id and current_audit.file_checksum_md5:
-        # Follow the checksum to a *different* batch where this data
-        # was first ingested (and thus where it lives on disk). We
-        # search the audit DAO for ANY successful ingestion of this
-        # checksum from a batch OTHER than the current one.
-        prior = _find_prior_ingestion_by_checksum_excluding_batch(
-            checksum_md5=current_audit.file_checksum_md5,
-            excluded_batch_id=batch_id,
-        )
-        if prior is None:
-            log.warning(
-                "bronze_partition_audit_disk_mismatch",
-                source=source_name,
-                batch_id=batch_id,
-                reason="audit claims ingested in current batch but disk path missing, "
-                       "no prior ingestion of this checksum found in any other batch",
-            )
-            return None
-        candidate_batch = prior.batch_id
-    else:
-        # Different batch — use as-is.
-        candidate_batch = current_audit.batch_id
-
-    fallback_partition = bronze_root / source_name / f"batch_id={candidate_batch}"
-    if not fallback_partition.is_dir():
+    # We have a checksum. Now find ALL batches that ingested this
+    # checksum and try each one's partition until we find one that
+    # exists on disk. This handles chains of file-grain skips:
+    # day-1 wrote the bytes; day-2 skipped; 2026-06-02 also skipped;
+    # the resolver needs to walk back to day-1.
+    checksum = current_audit.file_checksum_md5
+    if not checksum:
+        # Defensive: if the audit row lacks a checksum (data corruption,
+        # legacy row), we can't follow the chain.
         log.warning(
-            "bronze_partition_audit_disk_mismatch",
+            "bronze_partition_audit_no_checksum",
             source=source_name,
             batch_id=batch_id,
-            audit_says_batch=candidate_batch,
-            expected_path=str(fallback_partition),
+            audit_batch=current_audit.batch_id,
         )
         return None
 
-    log.info(
-        "bronze_partition_resolved_via_audit",
-        source=source_name,
-        requested_batch=batch_id,
-        resolved_to_batch=candidate_batch,
-        reason="current-batch partition missing (likely file-grain skip)",
+    candidate_batches = _find_all_batches_with_checksum(
+        checksum_md5=checksum,
+        excluded_batch_id=batch_id,
     )
-    return fallback_partition
+    for candidate_batch in candidate_batches:
+        fallback_partition = bronze_root / source_name / f"batch_id={candidate_batch}"
+        if fallback_partition.is_dir():
+            log.info(
+                "bronze_partition_resolved_via_audit",
+                source=source_name,
+                requested_batch=batch_id,
+                resolved_to_batch=candidate_batch,
+                reason="current-batch partition missing (likely file-grain skip)",
+            )
+            return fallback_partition
+
+    # No candidate batch's partition exists on disk. The audit DAO
+    # claims data was ingested but it's not findable anywhere.
+    log.warning(
+        "bronze_partition_audit_disk_mismatch",
+        source=source_name,
+        batch_id=batch_id,
+        reason=(
+            f"checksum {checksum[:8]} known in audit DAO but no batch's "
+            f"partition exists on disk; tried {len(candidate_batches)} candidate(s)"
+        ),
+        candidate_batches=candidate_batches,
+    )
+    return None

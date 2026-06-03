@@ -163,3 +163,91 @@ class TestNoIngestionFound:
         # Falls back to day-1
         assert path is not None
         assert path == cfg.paths.bronze / "clubs" / "batch_id=day-1"
+
+
+# ---------------------------------------------------------------------------
+# Chain of file-grain skips (Slice 8.1b regression tests)
+# ---------------------------------------------------------------------------
+
+
+class TestChainOfFileGrainSkips:
+    """
+    Regression tests for the bug found during Phase 8 Airflow integration:
+    when an unchanged source is file-grain-skipped across multiple
+    successive batches, the resolver must walk back to find the batch
+    that actually wrote the bytes — not just one step back.
+
+    Reproduces the Mac scenario: day-1 writes everything; day-2 skips
+    unchanged sources (data lives in day-1); a third batch with
+    different-shaped batch_id (e.g. '2026-06-02') also skips them.
+    Silver for batch '2026-06-02' must still find the data under day-1.
+
+    Also exercises the related bug: batch_id `<= ?` string comparison
+    is unsafe across mixed-format batch_ids ('day-1' vs '2026-06-02').
+    """
+
+    def test_resolver_follows_chain_two_skips_deep(self, day1_and_day2_seeded):
+        """day-1 wrote players bronze (under players.csv == day-1 checksum).
+        day-2 had its own players.csv (different checksum) so wrote
+        separately. A third batch using the day-1 players.csv would
+        skip both — chain depth of 2. Resolver must still find data."""
+        from src.utils.config import get_config
+        from src.bronze.run import run_bronze
+        cfg = get_config()
+
+        # Run a third batch against the day-1 samples (unchanged from day-1)
+        run_bronze(batch_id="2026-06-02", raw_root=SAMPLES_DIR)
+
+        # Now resolve clubs/competitions/player_valuations — these were
+        # byte-identical between day-1 and day-2 AND between day-2 and
+        # the third batch. Data only physically exists under day-1.
+        for src in ("clubs", "competitions", "player_valuations"):
+            path = resolve_bronze_partition(
+                bronze_root=cfg.paths.bronze,
+                source_name=src,
+                batch_id="2026-06-02",
+            )
+            assert path is not None, f"Resolver returned None for {src}"
+            assert path == cfg.paths.bronze / src / "batch_id=day-1", (
+                f"Resolver returned wrong path for {src}: {path}"
+            )
+
+    def test_audit_lookup_handles_mixed_batch_id_formats(self, day1_and_day2_seeded):
+        """The audit DAO's find_most_recent_ingestion_for_source must
+        not use lexicographic batch_id comparison — that would treat
+        'day-2' as later than '2026-06-02' (ASCII 'd' > '2') and
+        miss valid prior ingestions. The fix orders by registered_at
+        instead."""
+        from src.bronze.run import run_bronze
+        from src.metadata import audit
+
+        # Register a future batch
+        run_bronze(batch_id="2026-06-02", raw_root=SAMPLES_DIR)
+
+        # The third batch's audit row registered_at is later than
+        # day-1's and day-2's. Lookup as_of_batch_id='2026-06-02'
+        # should find one of the earlier batches as 'most recent
+        # at-or-before' — regardless of lexicographic ordering.
+        result = audit.find_most_recent_ingestion_for_source(
+            source_name="clubs", as_of_batch_id="2026-06-02",
+        )
+        assert result is not None
+        # Should find one of the prior batches; the exact batch depends
+        # on registered_at ordering. What matters is it found one
+        # (the pre-fix code would have returned None because
+        # 'day-1' and 'day-2' both fail lexicographic '<= 2026-06-02')
+        assert result.batch_id in {"day-1", "day-2", "2026-06-02"}
+
+    def test_silver_succeeds_across_chained_skips(self, day1_and_day2_seeded):
+        """End-to-end: Silver for the third batch must produce all
+        artifacts when every Bronze source is file-grain-skipped.
+        This is the exact failure mode that the Airflow DAG hit."""
+        from src.bronze.run import run_bronze
+        from src.silver.run import run_silver
+        run_bronze(batch_id="2026-06-02", raw_root=SAMPLES_DIR)
+        silver_summary = run_silver(batch_id="2026-06-02")
+        assert silver_summary.layer_status == "success", (
+            f"Silver failed: {[r.error_message for r in silver_summary.results if r.status == 'failed']}"
+        )
+        # All 6 artifacts written
+        assert sum(1 for r in silver_summary.results if r.status == "written") == 6
