@@ -91,8 +91,8 @@ project/
 | 4     | DQ framework + quarantine + report                 | ✅ Done  |
 | 5     | Gold aggregations + DuckDB views                   | ✅ Done  |
 | 6     | Day-2 incremental snapshot + SCD2 validation       | ✅ Done  |
-| 7     | Spark engine: stub + design doc *(not fully built — cost-aware choice)* | ⏳ Next |
-| 8     | Airflow DAG + idempotency wiring                   | ⏳       |
+| 7     | Spark engine: stub + design doc *(deliberate scope choice, see ADR-0009)* | ✅ Done |
+| 8     | Airflow DAG + idempotency wiring                   | ⏳ Next  |
 | 9     | Docker + docker-compose stack                      | ⏳       |
 | 10    | PII anonymisation, Superset, CI, README polish     | ⏳       |
 
@@ -455,6 +455,63 @@ new versions for Saka and Neuer.
 Total test count after Phase 6: **407 passing, 1 skipped**
 (adds: bronze_resolver 6, scd2_day2 14, silver_run_day2 10).
 
+### What's in Phase 7
+
+Phase 7 adds the Spark engine stub and the engineering case for why
+this codebase implements Pandas to production quality and Spark as a
+deliberate stub. The brief allows either engine "or both, with
+abstraction." We chose "Pandas fully, with the abstraction proven
+real via a contracted Spark stub" — and ADR-0009 articulates why.
+
+The core argument: at this data scale (~9 GB), Pandas runs the full
+Bronze→Silver→Gold pipeline in ~60 seconds. Spark would add JVM
+startup, cluster management, and 5-10x slower test iteration with no
+functional benefit. The abstraction (`src/engines/base.py`) exists
+to make adding Spark a contained, contracted task — ~2 weeks of
+focused engineering in a single file — when scale, deployment, or
+multi-tenancy actually justify it.
+
+What this phase delivers:
+
+- **`src/engines/spark_engine.py`**: a `SparkEngine` class
+  implementing every method of the `DataFrameEngine` protocol and
+  raising `NotImplementedError` on each. The stub is deliberately
+  minimal — no `import pyspark` anywhere, no scaffolded session
+  management. A user can instantiate it (proving the factory
+  wiring), but every operation refuses to work with a clear message
+  pointing at ADR-0009.
+
+- **Factory dispatch already wired** (from Phase 1).
+  Switching engines is a one-line config change in
+  `configs/config.yaml` (`engine: pandas | spark`) or via the
+  `PIPELINE_ENGINE` environment variable. The factory selects the
+  right class; the abstraction handles the rest.
+
+- **7 stub tests** in `tests/test_spark_engine_stub.py` proving:
+  * The factory returns the right class for each engine kind
+  * Both engines satisfy the `DataFrameEngine` protocol (catches
+    missing-abstract-method bugs before runtime)
+  * The stub is cheap to instantiate (no JVM startup)
+  * Representative operations raise `NotImplementedError` with
+    messages pointing at ADR-0009
+  * `pyspark` is NOT in `sys.modules` after instantiating the stub
+    (the zero-dependency claim is enforced by test)
+
+- **ADR-0009** documents the engineering case: why Pandas, why the
+  stub exists at all, what a real Spark implementation would look
+  like method-by-method, the honest ~2 week cost estimate, and the
+  scale/deployment thresholds where flipping the switch would be
+  justified. Five alternatives explicitly rejected (build both,
+  Spark only, drop the abstraction entirely, more-thorough stub,
+  add pyspark to requirements).
+
+The point: this codebase doesn't pretend Spark is "almost done." It
+takes a defensible position, names the cost of the missing work, and
+proves the abstraction supports the upgrade today.
+
+Total test count after Phase 7: **414 passing, 1 skipped**
+(adds: spark_engine_stub 7).
+
 ---
 
 ## Running the pipeline
@@ -480,7 +537,7 @@ pip install -r requirements-dev.txt
 # Run the full test suite (~30 seconds)
 pytest tests/
 
-# Expected: 407 passed, 1 skipped
+# Expected: 414 passed, 1 skipped
 ```
 
 ### Full pipeline in three commands
@@ -839,6 +896,45 @@ for r in rows:
           f'source={r.source_row_count:>4} bronze={r.bronze_row_count:>4}')
 "
 ```
+
+### Switching engines (Pandas / Spark)
+
+The engine abstraction (`src/engines/base.py`) supports both Pandas
+and Spark. Pandas is the production implementation; Spark is a
+deliberate stub (see ADR-0009 for the engineering case).
+
+To verify the abstraction works for both engines:
+
+```bash
+# Default behaviour — Pandas runs the full pipeline
+python -c "
+from src.engines.factory import get_engine
+engine = get_engine()
+print(f'Default engine: {engine.kind}')
+"
+# Expected: Default engine: pandas
+
+# Switch to Spark via env var; instantiation succeeds, operations refuse
+PIPELINE_ENGINE=spark python -c "
+from src.utils.config import get_config; get_config.cache_clear()
+from src.engines.factory import get_engine; get_engine.cache_clear()
+engine = get_engine()
+print(f'Configured engine: {engine.kind}')
+try:
+    engine.read_csv('data/sample/players.csv')
+except NotImplementedError as e:
+    print(f'Spark stub refuses operations as expected:')
+    print(f'  {e}')
+"
+# Expected: configured engine = spark, operations raise NotImplementedError
+# with a message pointing at ADR-0009
+```
+
+This proves the abstraction is real — the factory dispatch, config
+selection, and protocol layer all support both engines today. Only
+the Spark implementation body is missing. See ADR-0009 for the
+method-by-method design sketch and the honest ~2-week cost estimate
+for a production-quality Spark engine.
 
 ### Fetching the full Kaggle dataset
 
