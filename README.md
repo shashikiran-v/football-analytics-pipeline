@@ -90,8 +90,8 @@ project/
 | 3     | Silver: transforms, star-schema dimensions, SCD Type 2 | ✅ Done  |
 | 4     | DQ framework + quarantine + report                 | ✅ Done  |
 | 5     | Gold aggregations + DuckDB views                   | ✅ Done  |
-| 6     | Day-2 incremental snapshot + SCD2 validation       | ⏳ Next  |
-| 7     | Spark engine: stub + design doc *(not fully built — cost-aware choice)* | ⏳ |
+| 6     | Day-2 incremental snapshot + SCD2 validation       | ✅ Done  |
+| 7     | Spark engine: stub + design doc *(not fully built — cost-aware choice)* | ⏳ Next |
 | 8     | Airflow DAG + idempotency wiring                   | ⏳       |
 | 9     | Docker + docker-compose stack                      | ⏳       |
 | 10    | PII anonymisation, Superset, CI, README polish     | ⏳       |
@@ -350,6 +350,111 @@ DuckDB view.
 Total test count after Phase 5: **377 passing, 1 skipped**
 (adds: gold_duckdb 6, gold_artifacts 28, gold_run 13).
 
+### What's in Phase 6
+
+Phase 6 adds day-2 incremental processing and demonstrates that SCD2
+works correctly across batches. The committed `data/sample/day2/`
+directory contains a complete second vendor snapshot with deliberate
+diffs that exercise every aspect of cross-batch behaviour.
+
+Two genuinely new things came out of Phase 6:
+
+**1. The day-2 test data and the SCD2 cross-batch certificate.** Most
+candidates can't demonstrate SCD2 working across batches because they
+never run a day-2. This codebase ships with one and pins every aspect
+with 24 dedicated tests.
+
+**2. Two real architectural bugs surfaced and fixed.** Day-2 testing is
+the first thing in the codebase that exercises multi-batch storage,
+and it surfaced issues invisible in single-batch operation:
+
+- **The Bronze→Silver/DQ contract gap.** File-grain idempotency
+  (ADR-0003) skips re-writing identical bytes under a new partition.
+  Silver and DQ were silently assuming "Bronze data for batch X lives
+  under partition `batch_id=X`" — violated on day-2 for the three
+  unchanged sources. Fixed via `src/bronze/resolver.py` (the
+  cross-batch resolver). See ADR-0008.
+
+- **The destructive parquet writer.** Phase 1's `PandasEngine.write_parquet`
+  called `shutil.rmtree(target)` before every write — silently wiping
+  all existing batch partitions. Latent since Phase 1, invisible until
+  Phase 6. Fixed with partition-aware overwrite semantics:
+  partition-only rmtree for partitioned writes. See ADR-0008.
+
+What's now demonstrable:
+
+- **`data/sample/day2/`**: complete second-day vendor snapshot, 6 CSVs.
+  Three (`clubs`, `competitions`, `player_valuations`) are byte-identical
+  to day-1 — they exercise file-grain idempotency. Three have deliberate
+  diffs: Saka transferred (Arsenal→Chelsea, value 120M→130M), Neuer's
+  position label changed (`"GK"`→`"Goalkeeper"` — raw change with
+  unchanged canonical), and 7 new appearances/games in January 2025.
+
+- **`src/bronze/resolver.py`**: `resolve_bronze_partition()` handles
+  the contract gap. When the current-batch partition is absent, follows
+  the file's MD5 checksum to find the batch where the data actually
+  lives. Used by Silver runner and DQ FK lookup builder.
+
+- **`src/metadata/audit.py`**: added `find_most_recent_ingestion_for_source`
+  helper. Used by the resolver.
+
+- **`src/silver/run.py`** + **`src/dq/runner.py`**: both delegate to the
+  resolver. DQ also fixes a subtle FK rule bug: missing FK target now
+  produces an absent dict key (triggers fail-open), not an empty set
+  (which would falsely fail every row).
+
+- **`src/engines/pandas_engine.py`**: partition-aware overwrite. The fix
+  knows the specific partition values in the incoming DataFrame and
+  only wipes those subdirectories, leaving other batches untouched.
+
+- **The SCD2 certificate**: 14 dedicated tests in
+  `tests/test_scd2_day2.py` pinning version counts, immutability of
+  historical rows, surrogate-key non-collision, and as-of-event
+  resolution across multi-version dim_players.
+
+- **Runner-level integration**: 10 tests in `tests/test_silver_run_day2.py`
+  verifying file-grain idempotency at the runner level, audit lineage
+  across batches, layer-grain idempotency on re-run, and the
+  cross-partition data integrity that caught the writer bug.
+
+- **ADR-0008**: documents the cross-batch resolver, partition-aware
+  overwrite semantics, observation-time SCD2 (we use batch timestamp
+  as effective_date because no vendor "change date" exists), and
+  raw-vs-canonical SCD2 detection (Neuer's case — vendor lineage
+  preserved by tracking both columns). Alternatives explicitly rejected.
+
+After Phase 6, the audit table evolution day-1 → day-2 tells the
+complete cross-batch story:
+
+```
+=== day-1 ===
+source                bronze  rejected  silver    gold
+appearances               30         1      29      12
+clubs                      5         0       5       0
+competitions               3         0       3       0
+games                      6         0       6       5
+player_valuations         18         0       0      18
+players                   12         0      12       0
+
+=== day-2 ===
+source                bronze  rejected  silver    gold
+appearances               35         1      34      12
+clubs               (skip)         0       5       0   ← file-grain skip
+competitions        (skip)         0       3       0   ← file-grain skip
+games                      8         0       8       5
+player_valuations   (skip)         0       0      18   ← file-grain skip
+players                   12         0      14       0   ← 12 + 2 SCD2 versions
+```
+
+The `(skip)` markers show file-grain idempotency working honestly:
+Bronze records the audit row but doesn't re-write bytes; Silver still
+processes the source via the cross-batch resolver. The `silver=14`
+for players on day-2 reflects the SCD2 merge output: 12 unchanged + 2
+new versions for Saka and Neuer.
+
+Total test count after Phase 6: **407 passing, 1 skipped**
+(adds: bronze_resolver 6, scd2_day2 14, silver_run_day2 10).
+
 ---
 
 ## Running the pipeline
@@ -375,7 +480,7 @@ pip install -r requirements-dev.txt
 # Run the full test suite (~30 seconds)
 pytest tests/
 
-# Expected: 377 passed, 1 skipped
+# Expected: 407 passed, 1 skipped
 ```
 
 ### Full pipeline in three commands
@@ -656,6 +761,70 @@ python -m src.bronze.run --batch-id demo-1 --raw-root data/sample
 python -m src.bronze.run --batch-id demo-2 --raw-root data/sample
 # Expected: every source 'skipped', skip_reason mentions demo-1
 ```
+
+### Running a day-2 incremental snapshot
+
+The `data/sample/day2/` directory contains a complete second-day
+vendor snapshot. Three sources are byte-identical to day-1 (testing
+file-grain idempotency) and three have deliberate diffs (testing
+SCD2 cross-batch behaviour). Walk through the day-2 demo as follows:
+
+```bash
+make clean
+
+# Day 1 — full Bronze, Silver
+python -m src.bronze.run --batch-id day-1 --raw-root data/sample
+python -m src.silver.run --batch-id day-1
+
+# Day 2 — watch for file-grain skips on unchanged sources
+python -m src.bronze.run --batch-id day-2 --raw-root data/sample/day2
+# Expected:
+#   competitions       skipped   skip_reason=identical checksum already ingested in batch day-1
+#   clubs              skipped   skip_reason=identical checksum already ingested in batch day-1
+#   players            written   rows=12
+#   games              written   rows=8
+#   appearances        written   rows=35
+#   player_valuations  skipped   skip_reason=identical checksum already ingested in batch day-1
+
+python -m src.silver.run --batch-id day-2
+# Expected SCD2 output (dim_players merge):
+#   new=0, changed=2, unchanged=10, total_output=14
+# The two changes are Saka (transferred to Chelsea, market value up)
+# and Neuer (position label changed 'GK'→'Goalkeeper' — raw vendor
+# change preserves vendor lineage per ADR-0008).
+```
+
+Verify the SCD2 cross-batch story:
+
+```bash
+python -c "
+import pandas as pd
+dim = pd.read_parquet('data/lake/silver/dim_players')
+# Cross-partition read returns the full historical view: 12 (day-1) + 14 (day-2) = 26
+print(f'Total dim_players rows across all partitions: {len(dim)}')
+
+# Saka has THREE rows visible across partitions:
+#   1 from day-1 partition (Arsenal-era, current at the time)
+#   2 from day-2 partition (Arsenal-era closed + Chelsea-era current)
+saka = dim[dim['player_id'] == 1001][
+    ['player_sk','current_club_id','market_value_in_eur',
+     'effective_date','end_date','is_current']
+]
+print('Saka SCD2 versions:')
+print(saka.to_string(index=False))
+"
+```
+
+Expected output: 26 total rows, with Saka showing his career
+progression — Arsenal at 120M (closed out at day-2 timestamp),
+Chelsea at 130M (current).
+
+This is the SCD2 win expressed at runtime: the same dim_players
+table preserves both Saka's historical Arsenal state AND his
+current Chelsea state, with surrogate keys that fact_appearances
+joins to as-of each appearance's match date. See ADR-0008 for the
+observation-time vs event-time discussion of the effective_date
+semantics.
 
 ### Inspecting the audit trail
 

@@ -74,5 +74,6 @@ old one's Status field to reflect that.
 | 0005   | SCD Type 2 Implementation           | Accepted |
 | 0006   | Data Quality Framework Design       | Accepted |
 | 0007   | Gold Layer Storage and Analytics    | Accepted |
+| 0008   | Cross-Batch Semantics               | Accepted |
 
 Future phases will add an ADR covering Spark engine scope.
