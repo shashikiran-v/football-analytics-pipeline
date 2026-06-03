@@ -89,11 +89,21 @@ class PandasEngine(DataFrameEngine):
         target = Path(path)
         if mode == "error" and target.exists():
             raise FileExistsError(f"Refusing to overwrite existing path: {target}")
-        if mode == "overwrite" and target.exists():
-            # Only wipe if it's a directory we own (partitioned), or a single file.
+
+        # Two distinct overwrite semantics:
+        #   1. Non-partitioned: overwrite the single file/dir entirely
+        #   2. Partitioned: overwrite ONLY the partitions present in the
+        #      incoming df; leave other partitions on disk untouched.
+        #
+        # The previous implementation `shutil.rmtree`d the whole target
+        # before writing, which silently wiped prior batches' partitions
+        # — discovered during Phase 6 day-2 testing. The fix: for
+        # partitioned writes, delete only the specific partition
+        # subdirectories we're about to replace, then let pyarrow's
+        # `existing_data_behavior="overwrite_or_ignore"` handle the rest.
+        if mode == "overwrite" and target.exists() and not partition_by:
             if target.is_dir():
                 import shutil
-
                 shutil.rmtree(target)
             else:
                 target.unlink()
@@ -105,6 +115,27 @@ class PandasEngine(DataFrameEngine):
         table = pa.Table.from_pandas(df, preserve_index=False)
 
         if partition_by:
+            # Partition-level overwrite: wipe ONLY the partition
+            # subdirectories present in the incoming dataframe.
+            if mode == "overwrite" and target.exists():
+                import shutil
+                partition_values_by_col: dict[str, set] = {}
+                for col in partition_by:
+                    partition_values_by_col[col] = set(df[col].unique())
+                # Single-column partition: rmtree each batch_id=... dir
+                # whose value is in the incoming df.
+                if len(partition_by) == 1:
+                    col = partition_by[0]
+                    for val in partition_values_by_col[col]:
+                        partition_dir = target / f"{col}={val}"
+                        if partition_dir.exists():
+                            shutil.rmtree(partition_dir)
+                else:
+                    # Multi-column partitioning isn't used in this
+                    # codebase yet; fall back to full wipe to avoid
+                    # subtle correctness gaps.
+                    shutil.rmtree(target)
+
             pq.write_to_dataset(
                 table,
                 root_path=str(target),
