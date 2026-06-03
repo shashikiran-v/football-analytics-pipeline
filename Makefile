@@ -4,7 +4,7 @@
 # Common operations as short verbs. Run `make help` for the inventory.
 # =====================================================================
 
-.PHONY: help install test lint typecheck samples seed clean
+.PHONY: help install test lint typecheck samples seed clean clean-caches clean-data clean-all
 
 # Use bash with strict flags so a failing command in a recipe stops the line.
 SHELL := /bin/bash
@@ -37,8 +37,25 @@ samples:             ## Regenerate the committed sample CSVs in data/sample/.
 seed:                ## Download the full Kaggle dataset to data/day1/ + write manifest.
 	$(PYTHON) -m scripts.seed_kaggle
 
-clean:               ## Remove caches and SQLite metadata DB (data/sample/ is preserved).
+clean:               ## Reset pipeline state: lake, DQ reports, metadata DB, caches (preserves data/sample, data/day1, data/day2).
 	rm -rf .pytest_cache .mypy_cache .ruff_cache
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+	rm -rf data/lake data/dq_reports
 	rm -f data/metadata.db data/metadata.db-wal data/metadata.db-shm
-	@echo "Cleaned caches and metadata DB."
+	@echo "Reset pipeline state. Sample data, Kaggle data and code preserved."
+
+clean-caches:        ## Remove only Python/test caches (does NOT touch pipeline data).
+	rm -rf .pytest_cache .mypy_cache .ruff_cache
+	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+	@echo "Cleaned caches only. Pipeline state preserved."
+
+clean-data:          ## Remove only pipeline outputs (lake, DQ reports, metadata DB).
+	rm -rf data/lake data/dq_reports
+	rm -f data/metadata.db data/metadata.db-wal data/metadata.db-shm
+	@echo "Cleaned pipeline data. Caches preserved."
+
+clean-all:           ## Nuclear reset: clean + drop raw Kaggle data from data/day1/, data/day2/.
+	$(MAKE) clean
+	find data/day1 -mindepth 1 -not -name '.gitkeep' -delete 2>/dev/null || true
+	find data/day2 -mindepth 1 -not -name '.gitkeep' -delete 2>/dev/null || true
+	@echo "Nuclear reset complete. Raw Kaggle data also removed."
