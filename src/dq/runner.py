@@ -43,6 +43,7 @@ from src.dq.rules import (
     fk_dependencies,
     rules_for_source,
 )
+from src.bronze.resolver import resolve_bronze_partition
 from src.engines.base import DataFrame, DataFrameEngine
 from src.utils.logging import get_logger
 
@@ -127,25 +128,40 @@ def build_fk_lookups(
     by any FK rule in the loaded config.
 
     Returns a dict keyed by (source_name, column_name) -> set of valid
-    values present in that source's Bronze partition for this batch.
+    values present in that source's Bronze partition.
 
-    Sources that have no Bronze partition for this batch (e.g. didn't
-    get ingested) produce empty lookup sets. Downstream FK rules will
-    then fail every row that tries to reference that source — which
-    is the correct behaviour for incomplete batches.
+    Cross-batch reading
+    -------------------
+    Uses `resolve_bronze_partition` which falls back to a prior batch
+    if the current-batch partition was skipped via file-grain
+    idempotency (ADR-0008). Important for day-2+ runs where unchanged
+    FK target sources (clubs, competitions) live under day-1's
+    partition but day-2 DQ still needs their values.
+
+    Missing source handling
+    -----------------------
+    If neither the current-batch partition NOR any prior batch's
+    partition exists, the source is OMITTED from the returned dict
+    (NOT inserted with an empty set). This is the critical semantic:
+    the FK rule's evaluate() checks `valid_set is None` for fail-open
+    behaviour. An empty set would falsely fail every value; an absent
+    key triggers fail-open.
     """
     deps = fk_dependencies()
     lookups: dict[tuple[str, str], set[Any]] = {}
     for (source, column), consumers in deps.items():
-        partition_path = bronze_root / source / f"batch_id={batch_id}"
-        if not partition_path.is_dir():
+        partition_path = resolve_bronze_partition(
+            bronze_root=bronze_root, source_name=source, batch_id=batch_id,
+        )
+        if partition_path is None:
             log.warning(
                 "fk_lookup_source_missing",
                 source=source, column=column,
                 consumers=consumers,
-                partition_path=str(partition_path),
+                reason="no current-batch partition AND no prior ingestion in audit DAO",
             )
-            lookups[(source, column)] = set()
+            # Deliberately do NOT insert into lookups — absent key
+            # triggers the FK rule's fail-open path.
             continue
         df = engine.read_parquet(partition_path)
         records = engine.to_records(engine.select(df, [column]))

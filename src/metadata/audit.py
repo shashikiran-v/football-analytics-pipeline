@@ -894,6 +894,72 @@ def find_previous_successful_ingestion(
         return AuditRow.from_sqlite_row(row) if row else None
 
 
+def find_most_recent_ingestion_for_source(
+    *,
+    source_name: str,
+    as_of_batch_id: str | None = None,
+) -> AuditRow | None:
+    """
+    Most-recent successful audit row for the given source.
+
+    Used by downstream consumers (Silver runner, DQ FK lookup builder)
+    that need to read Bronze data for a source whose current-batch
+    partition doesn't exist on disk — typically because file-grain
+    idempotency skipped re-writing identical bytes (ADR-0003).
+
+    If `as_of_batch_id` is provided, returns the most-recent ingestion
+    for that batch OR earlier (i.e. never returns audit rows from
+    batches AFTER the as_of point). For day-2 reading day-1 data,
+    as_of_batch_id should be the current batch.
+
+    Returns None if no successful ingestion exists for this source.
+    Callers decide what to do (raise an error, return empty data,
+    fail open). The audit DAO's job is to surface what IS known
+    about the data lineage.
+
+    Why source-grain (not file-grain): a source may consist of multiple
+    files; we return ONE audit row representing the most recent batch
+    where the source was successfully ingested. The caller uses that
+    row's batch_id to derive the partition path.
+    """
+    with connect() as conn:
+        if as_of_batch_id is None:
+            row = conn.execute(
+                """
+                SELECT * FROM file_audit
+                WHERE source_name = ?
+                  AND status IN (?, ?, ?)
+                ORDER BY registered_at DESC
+                LIMIT 1
+                """,
+                (
+                    source_name,
+                    FileStatus.INGESTED.value,
+                    FileStatus.TRANSFORMING.value,
+                    FileStatus.TRANSFORMED.value,
+                ),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """
+                SELECT * FROM file_audit
+                WHERE source_name = ?
+                  AND status IN (?, ?, ?)
+                  AND batch_id <= ?
+                ORDER BY registered_at DESC
+                LIMIT 1
+                """,
+                (
+                    source_name,
+                    FileStatus.INGESTED.value,
+                    FileStatus.TRANSFORMING.value,
+                    FileStatus.TRANSFORMED.value,
+                    as_of_batch_id,
+                ),
+            ).fetchone()
+        return AuditRow.from_sqlite_row(row) if row else None
+
+
 def latest_schema_hash(
     *,
     source_name: str,

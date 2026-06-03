@@ -52,6 +52,7 @@ from src.engines.factory import get_engine
 from src.ingestion.registry import get_registry
 from src.metadata import audit, runs
 from src.metadata.db import init_db
+from src.bronze.resolver import resolve_bronze_partition
 from src.dq.quarantine import quarantine_rejected_rows
 from src.dq.report import build_batch_report, build_source_report, write_report
 from src.dq.runner import DQResult, build_fk_lookups, run_dq_for_source
@@ -164,14 +165,27 @@ def _read_bronze(
     """
     Read a Bronze partition for the given source and batch.
 
-    Raises FileNotFoundError if the partition doesn't exist on disk —
-    the runner catches this and records a per-artifact failure.
+    Uses the cross-batch resolver — if the current-batch partition
+    doesn't exist on disk (because file-grain idempotency skipped
+    re-writing identical bytes; see ADR-0008), falls back to the
+    most-recent prior batch's partition where this source was
+    successfully ingested.
+
+    Raises FileNotFoundError if NEITHER current nor any prior batch's
+    partition exists — meaning the source was never successfully
+    ingested at-or-before this batch. The runner catches this and
+    records a per-artifact failure.
     """
-    path = _bronze_partition_path(bronze_root, source_name, batch_id)
-    if not path.is_dir():
+    path = resolve_bronze_partition(
+        bronze_root=bronze_root, source_name=source_name, batch_id=batch_id,
+    )
+    if path is None:
         raise FileNotFoundError(
-            f"Bronze partition missing: {path}. Run `python -m src.bronze.run` "
-            f"for batch_id={batch_id} first."
+            f"No Bronze partition resolvable for source={source_name!r}, "
+            f"batch_id={batch_id!r}. Either run `python -m src.bronze.run` "
+            f"for batch_id={batch_id}, or ingest this source in an earlier "
+            f"batch (file-grain idempotency will then make it available "
+            f"to subsequent Silver runs)."
         )
     return engine.read_parquet(path)
 
