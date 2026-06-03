@@ -48,6 +48,7 @@ import json
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from src.dq.rules import SEVERITY_CRITICAL, SEVERITY_WARNING
 from src.dq.runner import DQResult
@@ -198,4 +199,34 @@ def write_report(
         warnings=report.summary.warning_count,
         rows_quarantined=report.summary.total_rows_quarantined,
     )
+    return output_path
+
+
+def read_dq_report(report_path: Path) -> dict[str, Any]:
+    """
+    Read a DQ report JSON and return a flattened summary dict.
+
+    Returns a dict with these keys (always present):
+      * rows_in_total           : total source rows across all sources
+      * rows_clean_total        : rows that passed DQ
+      * rows_quarantined_total  : rows that failed critical rules
+      * critical_failures_total : count of (rule, source) pairs with >0 critical failures
+      * warning_failures_total  : count of (rule, source) pairs with >0 warning failures
+      * sources_with_critical   : list of source names with critical failures
+
+    Used by the Airflow DQ gate task and by tests; keeps consumers
+    decoupled from the DQBatchReport dataclass shape.
+    """
+    with report_path.open(encoding="utf-8") as f:
+        raw = json.load(f)
+    summary = raw.get("summary", {})
+    return {
+        "batch_id": raw.get("batch_id"),
+        "rows_in_total": summary.get("total_rows_in", 0),
+        "rows_clean_total": summary.get("total_rows_clean", 0),
+        "rows_quarantined_total": summary.get("total_rows_quarantined", 0),
+        "critical_failures_total": summary.get("critical_failure_count", 0),
+        "warning_failures_total": summary.get("warning_count", 0),
+        "sources_with_critical": summary.get("sources_with_critical_failures", []),
+    }
     return output_path

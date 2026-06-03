@@ -1,0 +1,16 @@
+# Optional Airflow dependencies for Phase 8 orchestration.
+#
+# Airflow is NOT in the core requirements.txt (per ADR-0010) — installing
+# it adds ~150 MB and isn't needed for any other phase. Users who want
+# to run the DAG locally or via Docker (Phase 9) install these on top.
+#
+# Usage:
+#   pip install -r requirements.txt -r requirements-airflow.txt --constraint \
+#     https://raw.githubusercontent.com/apache/airflow/constraints-2.10.3/constraints-3.12.txt
+#
+# Without the constraints file, transitive dependencies (especially
+# Flask, Werkzeug, SQLAlchemy) can resolve to incompatible versions
+# and the DAG file won't import. The constraints file is Apache's
+# official pinning for each Airflow release.
+
+apache-airflow==2.10.3
