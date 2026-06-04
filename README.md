@@ -1,41 +1,108 @@
 # Football Analytics Pipeline
 
-A production-grade, modular ETL pipeline over the Kaggle Player Scores
-dataset, built around a Medallion architecture (Bronze → Silver → Gold)
-with full Airflow orchestration, Docker packaging, SCD Type 2 historical
-tracking, and a Pandas/PySpark dual-engine abstraction selectable via
-config.
+[![CI](https://github.com/shashikiran-v/football-analytics-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/shashikiran-v/football-analytics-pipeline/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
+[![Tests](https://img.shields.io/badge/tests-435%20passing-brightgreen.svg)](https://github.com/shashikiran-v/football-analytics-pipeline/actions/workflows/ci.yml)
+[![ADRs](https://img.shields.io/badge/ADRs-11-blue.svg)](docs/adr/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-> **Status: under active development.** This README will fill out as
-> phases land. The build is incremental and every phase ships passing
-> tests; see [Build progress](#build-progress) below.
+A production-grade ETL pipeline over the Kaggle Player Scores dataset.
+Medallion architecture (Bronze → Silver → Gold) with SCD Type 2 historical
+dimensions, declarative DQ rules with quarantine, partition-aware idempotency
+at both file and layer grain, Airflow orchestration with a DQ hard-fail gate,
+and a one-command Docker deployment. Eleven Architecture Decision Records
+document every consequential design choice from audit table layout through
+Docker deployment.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    raw["Raw CSVs<br/>Kaggle dataset"]:::source --> bronze
+
+    subgraph pipeline["ETL Pipeline (Airflow DAG)"]
+        bronze["**Bronze**<br/>Vendor schema<br/>+ file checksums"]:::layer
+        bronze -->|"file-grain<br/>skip"| silver["**Silver**<br/>Star schema<br/>SCD Type 2"]:::layer
+        silver --> dq{{"**DQ Gate**<br/>fail if critical<br/>and >5% quarantined"}}:::gate
+        dq -->|pass| gold["**Gold**<br/>Aggregations<br/>+ DuckDB views"]:::layer
+        dq -->|fail| stop[/"Pipeline halts"/]:::error
+    end
+
+    silver -.->|orphans| quarantine[("`_rejected/`<br/>Quarantined rows")]:::reject
+
+    bronze -.->|every write| audit[("SQLite<br/>audit DAO<br/>+ pipeline_runs")]:::meta
+    silver -.->|every artifact| audit
+    gold -.->|every artifact| audit
+
+    gold --> consumers["BI / Analytics<br/>Parquet + DuckDB SQL"]:::sink
+
+    classDef source fill:#e8f4f8,stroke:#0288d1,stroke-width:2px,color:#000
+    classDef layer fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#000
+    classDef gate fill:#fce4ec,stroke:#c2185b,stroke-width:2px,color:#000
+    classDef error fill:#ffcdd2,stroke:#b71c1c,stroke-width:2px,color:#000
+    classDef reject fill:#fff9c4,stroke:#f9a825,stroke-width:2px,color:#000
+    classDef meta fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#000
+    classDef sink fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#000
+```
+
+**Key properties:**
+
+- **Idempotent at two grains.** File-grain at Bronze (skip identical-checksum files across batches via the audit DAO's `find_previous_successful_ingestion` lookup). Layer-grain at Bronze/Silver/Gold (each layer checks `pipeline_runs` before doing work). Re-triggering a successful batch is a guaranteed no-op.
+- **DQ failures route, not crash.** Critical rule violations send rows to `_rejected/<source>/` partitions with the failure reason attached; the DAG continues. A separate gate task between Silver and Gold halts the pipeline only when DQ failures cross a configurable threshold (default `critical > 0 AND quarantine_pct > 5%`).
+- **SCD Type 2 via hash-based merge.** Tracked columns combine into a row hash; incoming rows compare against the current version's hash to detect changes. Far-past sentinel dates handle initial loads cleanly; observation-time effective dates support audit lineage when vendor change dates are absent.
+- **Engine abstraction with a working stub.** A `DataFrameEngine` protocol fronts the Pandas implementation; a Spark engine stub implements the same protocol with `NotImplementedError` per method. Switching engines is a config change. Production Spark is ~2 weeks of focused work in one file (see [ADR-0009](docs/adr/0009-spark-engine-scope-and-stub.md)).
+- **One-command deployment.** `make docker-build && make docker-up` launches the full Airflow + pipeline stack via a single-service compose file. Bind-mounted data directory means a reviewer can browse the lake on their host filesystem while the container runs.
+
+---
+
+## Quick start
+
+```bash
+# Option A: in your local venv
+git clone https://github.com/shashikiran-v/football-analytics-pipeline.git
+cd football-analytics-pipeline
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt -r requirements-dev.txt
+pytest tests/                                  # 414 tests pass (no Airflow)
+
+# Option B: full stack with Docker + Airflow UI
+make docker-build                              # ~3 min first time
+make docker-up                                 # webserver at http://localhost:8080
+```
+
+Full instructions in [Running the pipeline](#running-the-pipeline). The Docker
+path is described in detail in [Running with Docker](#running-with-docker)
+including the gotchas surfaced during the build.
 
 ---
 
 ## Why this design
 
-The brief asks for a list of capabilities. The interesting question is
-*how those capabilities compose into something a senior engineer would
-actually ship*. Three decisions drive the architecture:
+Three decisions shape the architecture; each is documented in detail
+in an ADR.
 
 1. **The engine choice is a runtime config, not a code rewrite.**
-   A `DataFrameEngine` protocol fronts both Pandas and PySpark
-   implementations. Transformations import the protocol, never the
-   underlying library. Swapping engines is one line in `config.yaml`.
+   A `DataFrameEngine` protocol fronts the Pandas implementation;
+   transformations import the protocol, never the underlying library.
+   Swapping to Spark is a config change. The Spark engine is a
+   deliberate stub — see [ADR-0009](docs/adr/0009-spark-engine-scope-and-stub.md)
+   for the engineering case.
 
-2. **Idempotency is enforced by the metadata DB, not by hope.**
-   Every layer consults `pipeline_runs` before doing work and writes
-   its outcome on completion. Re-running a successful batch is a no-op;
-   re-running a failed batch resumes from the failed task.
+2. **Idempotency is enforced by the metadata DB at two grains, not by hope.**
+   File-grain idempotency at Bronze via checksum matching; layer-grain
+   idempotency at every layer via `pipeline_runs`. Re-running a
+   successful batch is a guaranteed no-op. Cross-batch behaviour
+   formalised in [ADR-0008](docs/adr/0008-cross-batch-semantics.md).
 
-3. **DQ failures quarantine, not crash.**
-   ERROR-severity DQ failures route bad rows to `_rejected/` parquet
-   and let the clean rows continue downstream. The DQ report is a
-   first-class artefact, queryable from SQLite, not a stack trace.
+3. **DQ failures route to quarantine; the pipeline keeps running.**
+   ERROR-severity DQ violations send bad rows to `_rejected/` partitions
+   with the failure reason attached. Clean rows continue downstream.
+   A separate Airflow gate task halts the DAG only when failures cross
+   a configurable threshold ([ADR-0006](docs/adr/0006-dq-framework.md),
+   [ADR-0010](docs/adr/0010-airflow-orchestration.md)).
 
-The full architectural rationale lands in this README in Phase 10
-(documentation polish). For now, the [Build progress](#build-progress)
-section below tracks what's implemented.
+The full ADR catalogue is in [`docs/adr/`](docs/adr/). Read in numerical
+order or jump to the one you care about.
 
 ---
 
@@ -58,24 +125,31 @@ section below tracks what's implemented.
 ## Repository layout
 
 ```
-project/
-├── configs/            # config.yaml (engine, paths, DQ behaviour, ...)
-├── dags/               # Airflow DAGs (Phase 8)
+football-analytics-pipeline/
+├── configs/            # config.yaml, sources.yaml, dq_rules.yaml, country_iso.yaml
+├── dags/               # Airflow DAG: bronze → silver → dq_gate → gold
 ├── src/
-│   ├── engines/        # DataFrameEngine protocol + Pandas/Spark impls
-│   ├── ingestion/      # Source loaders (Phase 2)
-│   ├── bronze/         # Raw partitioned Parquet writes (Phase 2)
-│   ├── silver/         # Star-schema transforms + SCD2 (Phase 3)
-│   ├── gold/           # Business aggregations (Phase 5)
-│   ├── dq/             # Data-quality checks + quarantine (Phase 4)
-│   ├── pii/            # Salted hashing anonymiser (Phase 10)
-│   ├── metadata/       # SQLite DAOs: runs, dq_results, watermarks
-│   ├── models/         # Pydantic table schemas
-│   └── utils/          # Config, structured logging, row hashing
-├── tests/              # pytest suites, engine-parametrised
-├── scripts/            # Day-2 mutation generator, query helpers
-├── data/               # Lake root (mostly gitignored; sample/ committed)
-└── docker/             # Dockerfiles (Phase 9)
+│   ├── engines/        # DataFrameEngine protocol + Pandas impl + Spark stub
+│   ├── ingestion/      # Source registry + file loader + Kaggle manifest
+│   ├── bronze/         # Raw partitioned Parquet writes + cross-batch resolver
+│   ├── silver/         # Star-schema transforms + SCD2 hash merge
+│   ├── gold/           # Business aggregations + DuckDB session/views
+│   ├── dq/             # Declarative rules + runner + quarantine + reports
+│   ├── orchestration/  # Airflow wrappers that translate context to runners
+│   ├── metadata/       # SQLite DAOs: audit, pipeline_runs, dq_results
+│   ├── models/         # Pydantic schemas
+│   └── utils/          # Config, structured logging, checksums, row hashing
+├── tests/              # 435 pytest tests
+├── scripts/            # Sample generator + Kaggle seeder
+├── data/
+│   ├── sample/         # Committed deterministic fixtures
+│   ├── day1/, day2/    # Gitignored — Kaggle data lands here
+│   └── lake/           # Gitignored — Bronze/Silver/Gold partitions
+├── docs/adr/           # 11 Architecture Decision Records
+├── .github/workflows/  # CI: pytest + ruff + Dockerfile build
+├── Dockerfile          # apache/airflow base + pipeline code baked in
+├── docker-compose.yml  # Single-service stack; one command to launch
+└── Makefile            # make install / test / docker-build / docker-up / ...
 ```
 
 ---
@@ -1251,17 +1325,24 @@ field flows into the audit DAO as the authoritative vendor timestamp.
 ## Pandas vs Spark — the choice
 
 The pipeline supports both engines via a single config switch
-(`engine: pandas | spark`). The architectural recommendation, justified
-in detail in Phase 10's README polish:
+(`engine: pandas | spark`). Pandas is the production implementation;
+Spark is a deliberate stub that proves the abstraction is contracted
+rather than aspirational. The full engineering case is in
+[ADR-0009](docs/adr/0009-spark-engine-scope-and-stub.md); the short
+version:
 
-* **Default to Pandas for this dataset.** The Kaggle data is ~1–2 GB
-  uncompressed. Spark on a single-node Docker container adds JVM
-  startup + serialisation overhead with no shuffle benefit; Pandas
-  wins on wall-clock time and memory footprint.
-* **Switch to Spark when** working-set memory exceeds ~50% of available
-  RAM, or fact-table joins exceed ~10M rows, or distributed execution
-  becomes available. The abstraction is the *option*; the right answer
-  for *this dataset on a laptop* is Pandas.
+* **Default to Pandas for this dataset.** The Kaggle data is ~9 GB
+  uncompressed. Pandas on a single-node container handles it in
+  ~60 seconds. Spark on the same hardware adds JVM startup + cluster
+  management for zero functional benefit at this scale.
+* **Switch to Spark when** working-set memory exceeds ~50% of
+  available RAM, fact-table joins exceed ~10M rows, or distributed
+  execution becomes available. ADR-0009 gives method-by-method
+  implementation estimates (~2 weeks of focused engineering for a
+  production Spark engine, contained in one file).
+
+The abstraction is the *option*; the right answer for *this dataset
+on a laptop* is Pandas.
 
 ---
 
