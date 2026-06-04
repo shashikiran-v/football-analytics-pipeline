@@ -3,16 +3,16 @@
 [![CI](https://github.com/shashikiran-v/football-analytics-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/shashikiran-v/football-analytics-pipeline/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
 [![Tests](https://img.shields.io/badge/tests-456%20passing-brightgreen.svg)](https://github.com/shashikiran-v/football-analytics-pipeline/actions/workflows/ci.yml)
-[![ADRs](https://img.shields.io/badge/ADRs-11-blue.svg)](docs/adr/)
+[![ADRs](https://img.shields.io/badge/ADRs-13-blue.svg)](docs/adr/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 A production-grade ETL pipeline over the Kaggle Player Scores dataset.
 Medallion architecture (Bronze → Silver → Gold) with SCD Type 2 historical
 dimensions, declarative DQ rules with quarantine, partition-aware idempotency
 at both file and layer grain, Airflow orchestration with a DQ hard-fail gate,
-and a one-command Docker deployment. Eleven Architecture Decision Records
-document every consequential design choice from audit table layout through
-Docker deployment.
+configurable PII tokenisation, and a one-command Docker deployment.
+Thirteen Architecture Decision Records document every consequential design
+choice from audit table layout through BI scope.
 
 ## Architecture
 
@@ -195,7 +195,7 @@ football-analytics-pipeline/
 | 7     | Spark engine: stub + design doc *(deliberate scope choice, see ADR-0009)* | ✅ Done |
 | 8     | Airflow DAG + idempotency wiring                   | ✅ Done  |
 | 9     | Docker + docker-compose stack                      | ✅ Done  |
-| 10    | PII anonymisation, Superset, CI, README polish     | ⏳ Next  |
+| 10    | CI + README polish + PII tokenisation + sample notebook | ✅ Done  |
 
 ### What's in Phase 2a
 
@@ -738,6 +738,51 @@ distributed execution. Same scope-discipline pattern as Spark
 
 Test count unchanged in Phase 9 — Docker is a deployment artifact,
 not new runtime code. **435 passing, 1 skipped.**
+
+### What's in Phase 10
+
+Phase 10 is the polish phase: turning a working pipeline into a
+strong portfolio piece. Five slices land:
+
+- **CI via GitHub Actions** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) —
+  three jobs run on every push: `test` (full pytest suite with
+  Airflow installed via Apache constraints), `lint` (ruff 0.4.10
+  pinned to match local development), `docker` (Dockerfile build
+  verification via buildx). The build badge at the top of this
+  README tracks the latest run.
+
+- **README polish + architecture diagram** — five badges at the
+  top, a Mermaid flowchart of the medallion flow rendered inline
+  on GitHub, a `Key properties` block tying capabilities to ADRs,
+  and a `Quick start` section with two paths (local venv or
+  Docker). The README is now a navigation surface that points
+  reviewers at the ADRs and the notebook.
+
+- **PII tokenisation in Silver** — declarative per-source
+  `pii.hash_columns` declarations in `sources.yaml`, salted
+  SHA-256 tokenisation in the Silver dim_players builder, an env-
+  var-driven `PII_ENABLED` flag, and 21 new tests. Tokenisation
+  happens BEFORE the SCD2 hash so re-runs don't spuriously detect
+  tokenised values as changes. ADR-0012 covers the design choice,
+  threat model, and the production hardening that's deliberately
+  out of scope (HMAC, salt rotation, secrets manager).
+
+- **Gold exploration notebook**
+  ([`notebooks/gold_exploration.ipynb`](notebooks/gold_exploration.ipynb)) —
+  seven narrative cells walking through real Gold queries with
+  executed outputs committed to the repo. GitHub renders the
+  notebook inline; reviewers see the queries and results without
+  cloning. `scripts/build_notebook.py` makes the notebook
+  reproducible. ADR-0013 captures the deliberate choice of
+  notebook-with-outputs over an embedded Superset deployment.
+
+- **Closeout: ADR-0012 + ADR-0013** — the two new ADRs above,
+  plus this Phase 10 section, plus updated badges to reflect 13
+  total ADRs and 456 passing tests.
+
+Test count after Phase 10: **456 passing, 1 skipped** (added 21
+PII tests in slice 10.3). The notebook and CI workflow don't
+add runtime tests — they're deployment artifacts.
 
 ---
 
@@ -1333,6 +1378,45 @@ pytest tests/                       # should now pass
 For a clean reviewer experience, **pick one path (Docker OR host
 standalone) and stick with it**. The wipe-between-environments
 discipline is only relevant for development iteration.
+
+### Privacy and PII handling
+
+The pipeline tokenises PII columns in Silver when `PII_ENABLED=true`.
+Player names, dates of birth, cities of birth, and other identifiers
+declared in `configs/sources.yaml` under each source's `pii.hash_columns`
+block get replaced with salted SHA-256 tokens (`pii_<8hex>`) before
+the SCD2 merge. The full case is in
+[ADR-0012](docs/adr/0012-pii-tokenisation.md).
+
+```bash
+# Production-style run with PII on:
+export PII_ENABLED=true
+export PII_SALT="<a-random-string-rotate-periodically>"
+python -m src.bronze.run --batch-id pii-on --raw-root data/sample
+python -m src.silver.run --batch-id pii-on
+python -m src.gold.run --batch-id pii-on
+
+# Verify the dimension has tokens, not names:
+python -c "
+import pandas as pd
+df = pd.read_parquet('data/lake/silver/dim_players')
+print(df[['player_id', 'name', 'first_name']].head())
+"
+# Expected: name column shows 'pii_a3f2b1c8' etc.
+
+# Dev-mode (no tokenisation, for the exploration notebook etc):
+export PII_ENABLED=false
+# (or unset both PII_ENABLED and PII_SALT)
+```
+
+The salt is read from the env var named in `config.pii.salt_env_var`
+(default `PII_SALT`). The pipeline refuses to tokenise with an empty
+salt — that would degenerate to unsalted SHA-256, which is trivially
+reversible via public rainbow tables.
+
+Test environment defaults PII OFF via the conftest autouse fixture,
+so the 435 pre-existing tests assert on plaintext names. PII-specific
+tests in `tests/test_pii.py` opt back in via `monkeypatch.setenv`.
 
 ### Fetching the full Kaggle dataset
 

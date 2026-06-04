@@ -78,3 +78,5 @@ old one's Status field to reflect that.
 | 0009   | Spark Engine Scope and Stub Design  | Accepted |
 | 0010   | Airflow Orchestration Design        | Accepted (amended 2026-06-04) |
 | 0011   | Docker Deployment Design            | Accepted |
+| 0012   | PII Tokenisation Design             | Accepted |
+| 0013   | BI / Visualisation Scope Choice     | Accepted |
