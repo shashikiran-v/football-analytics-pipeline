@@ -21,14 +21,14 @@ flowchart LR
     raw["Raw CSVs<br/>Kaggle dataset"]:::source --> bronze
 
     subgraph pipeline["ETL Pipeline (Airflow DAG)"]
-        bronze["**Bronze**<br/>Vendor schema<br/>+ file checksums"]:::layer
-        bronze -->|"file-grain<br/>skip"| silver["**Silver**<br/>Star schema<br/>SCD Type 2"]:::layer
-        silver --> dq{{"**DQ Gate**<br/>fail if critical<br/>and >5% quarantined"}}:::gate
-        dq -->|pass| gold["**Gold**<br/>Aggregations<br/>+ DuckDB views"]:::layer
+        bronze["Bronze<br/>Vendor schema<br/>+ file checksums"]:::layer
+        bronze -->|"file-grain<br/>skip"| silver["Silver<br/>Star schema<br/>SCD Type 2"]:::layer
+        silver --> dq{{"DQ Gate<br/>fail if critical<br/>and over 5% quarantined"}}:::gate
+        dq -->|pass| gold["Gold<br/>Aggregations<br/>+ DuckDB views"]:::layer
         dq -->|fail| stop[/"Pipeline halts"/]:::error
     end
 
-    silver -.->|orphans| quarantine[("`_rejected/`<br/>Quarantined rows")]:::reject
+    silver -.->|orphans| quarantine[("_rejected/<br/>quarantined rows")]:::reject
 
     bronze -.->|every write| audit[("SQLite<br/>audit DAO<br/>+ pipeline_runs")]:::meta
     silver -.->|every artifact| audit
