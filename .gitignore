@@ -68,6 +68,13 @@ plugins/
 airflow.cfg
 airflow.db
 webserver_config.py
+# Local airflow standalone state: SQLite DB, admin password,
+# generated configs, task logs. Created when AIRFLOW_HOME=$(pwd)/.airflow
+# is set per README. NEVER commit — contains the auto-generated
+# admin password and runtime task data.
+.airflow/
+simple_auth_manager_passwords.json.generated
+standalone_admin_password.txt
 
 # =====================================================================
 # Editors / OS

@@ -92,8 +92,8 @@ project/
 | 5     | Gold aggregations + DuckDB views                   | ✅ Done  |
 | 6     | Day-2 incremental snapshot + SCD2 validation       | ✅ Done  |
 | 7     | Spark engine: stub + design doc *(deliberate scope choice, see ADR-0009)* | ✅ Done |
-| 8     | Airflow DAG + idempotency wiring                   | ⏳ Next  |
-| 9     | Docker + docker-compose stack                      | ⏳       |
+| 8     | Airflow DAG + idempotency wiring                   | ✅ Done  |
+| 9     | Docker + docker-compose stack                      | ⏳ Next  |
 | 10    | PII anonymisation, Superset, CI, README polish     | ⏳       |
 
 ### What's in Phase 2a
@@ -512,6 +512,74 @@ proves the abstraction supports the upgrade today.
 Total test count after Phase 7: **414 passing, 1 skipped**
 (adds: spark_engine_stub 7).
 
+### What's in Phase 8
+
+Phase 8 satisfies the brief's §8 orchestration requirement with a
+runnable Airflow DAG that wires the three CLI commands
+(`python -m src.bronze.run`, `python -m src.silver.run`,
+`python -m src.gold.run`) into a scheduled pipeline with a DQ
+hard-fail gate between Silver and Gold.
+
+The DAG runs against Airflow 2.10.3 with `LocalExecutor` —
+`airflow standalone` brings up scheduler + webserver + worker as
+one process. CeleryExecutor is named explicitly as the production
+upgrade path in ADR-0010; we deliberately don't build it for the
+deliverable.
+
+Two latent bugs in the cross-batch resolver (ADR-0008) surfaced
+during Airflow integration testing — Phase 8's
+`data_interval_start` produces `YYYY-MM-DD` batch_ids against an
+audit DAO containing the `day-1`/`day-2` batches from Phase 6
+testing. Both bugs are documented in ADR-0010 and fixed in
+Slice 8.1b with 3 dedicated regression tests:
+
+- **Lexicographic batch_id comparison.** The audit DAO's
+  `find_most_recent_ingestion_for_source` used `WHERE batch_id <= ?`
+  SQL — string comparison. ASCII `d` (0x64) > `2` (0x32), so
+  `"day-1" <= "2026-06-02"` evaluates False. Fix: order/filter by
+  `registered_at` (ISO-8601, lexicographically safe).
+- **Resolver only walked back one step.** Chains of file-grain skips
+  (day-1 wrote bytes → day-2 skipped → 2026-06-02 skipped) defeated
+  the resolver. Fix: chain-following via
+  `_find_all_batches_with_checksum` returning a list; iterate
+  most-recent-first until a partition exists on disk.
+
+What this phase delivers:
+
+- **`dags/football_pipeline.py`**: the DAG. Linear chain
+  `bronze → silver → dq_gate → gold`. Daily schedule, 1 retry per
+  task, `max_active_runs=1` (prevents partition races),
+  `catchup=False`.
+- **`src/orchestration/airflow_wrappers.py`**: four PythonOperator
+  entrypoints that translate Airflow's run context into our
+  `batch_id` semantics. The runners themselves
+  (`src/bronze/run.py`, etc.) have no Airflow imports.
+- **DQ hard-fail gate** (the ADR-0006 deferred decision now landed):
+  fails when `critical_failures > 0 AND quarantine_pct > 5%`.
+  Proportional fail — a handful of orphan rows in 10 million
+  shouldn't kill the daily run; widespread DQ failure should.
+- **`requirements-airflow.txt`**: optional dependency separate
+  from core `requirements.txt`. Includes the Apache constraints
+  file URL because installing Airflow without constraints almost
+  always hits Flask/Werkzeug/SQLAlchemy version conflicts.
+- **Resolver chain-following fix** (Slice 8.1b): the cross-batch
+  resolver now handles arbitrary chains of file-grain skips and
+  arbitrary batch_id formats, with 3 dedicated regression tests in
+  `TestChainOfFileGrainSkips`.
+- **18 orchestration tests** + 3 regression tests = 21 new tests,
+  bringing total to 435.
+- **ADR-0010**: documents the LocalExecutor scope choice, the
+  CeleryExecutor production upgrade path, the PythonOperator +
+  wrapper pattern, the `data_interval_start → batch_id` derivation,
+  the DQ gate threshold, and the two bugs surfaced and fixed.
+
+Demonstrable end-to-end idempotency through Airflow: re-triggering
+a successful DAG run is a no-op via `pipeline_runs`, with all four
+tasks reporting "skipped." Production-grade re-run semantics.
+
+Total test count after Phase 8: **435 passing, 1 skipped**
+(adds: airflow_wrappers 9, airflow_dag 9, chain_of_skips 3).
+
 ---
 
 ## Running the pipeline
@@ -534,10 +602,12 @@ pip install -r requirements-dev.txt
 ### Verifying the build
 
 ```bash
-# Run the full test suite (~30 seconds)
+# Run the full test suite (~30 seconds without Airflow; ~90s with)
 pytest tests/
 
-# Expected: 414 passed, 1 skipped
+# Expected: 435 passed, 1 skipped (with Airflow installed)
+# Or:       414 passed, 22 skipped (without Airflow — 21 Airflow tests
+#                                    skip cleanly + 1 sample skip)
 ```
 
 ### Full pipeline in three commands
@@ -935,6 +1005,78 @@ selection, and protocol layer all support both engines today. Only
 the Spark implementation body is missing. See ADR-0009 for the
 method-by-method design sketch and the honest ~2-week cost estimate
 for a production-quality Spark engine.
+
+### Running the Airflow DAG
+
+Phase 8 wires the three CLI commands into an Airflow DAG with a DQ
+hard-fail gate between Silver and Gold. The DAG is at
+`dags/football_pipeline.py`; orchestration design choices are
+documented in ADR-0010.
+
+Airflow is an optional dependency. Install it on top of the core
+requirements:
+
+```bash
+# In your existing venv:
+pip install -r requirements-airflow.txt \
+  --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.10.3/constraints-3.12.txt"
+```
+
+The constraints file is essential — installing Airflow without it
+almost always produces Flask/Werkzeug/SQLAlchemy version conflicts
+that prevent the DAG from loading.
+
+Launch Airflow standalone (scheduler + webserver + LocalExecutor
+worker in one process):
+
+```bash
+export AIRFLOW_HOME=$(pwd)/.airflow
+export AIRFLOW__CORE__DAGS_FOLDER=$(pwd)/dags
+export AIRFLOW__CORE__LOAD_EXAMPLES=False
+export PYTHONPATH=$(pwd):$PYTHONPATH       # so dags/ can import src/
+airflow standalone
+```
+
+On first launch, Airflow prints an auto-generated admin password to
+stdout. Look for `Login with username: admin  password: <random>`.
+The password persists at `$AIRFLOW_HOME/simple_auth_manager_passwords.json.generated`
+(both files are gitignored).
+
+Open `http://localhost:8080`, log in, and:
+
+1. Toggle the `football_analytics_pipeline` DAG **on** (switch at
+   the left of the DAG row — paused by default)
+2. Click the DAG name to open its detail page
+3. Click **▶ Trigger DAG** in the top-right
+
+You should see four tasks turn green in sequence:
+
+```
+bronze (~3s) → silver (~3s) → dq_gate (~1s) → gold (~3s)
+```
+
+Expected outcomes:
+
+- `bronze`: 6 sources written (or skipped via file-grain idempotency
+  if you've run before)
+- `silver`: 6 artifacts written
+- `dq_gate`: decision=pass (1 critical failure from the orphan, but
+  ~3.3% quarantine is below the 5% threshold)
+- `gold`: 5 artifacts, 52 total rows
+
+### Proving idempotent re-trigger through Airflow
+
+Trigger the same DAG again. All four tasks turn green again — but
+this time each task reports `layer_status: skipped`. The runners
+checked `pipeline_runs` in the metadata DB, saw the batch already
+succeeded, and declared themselves no-ops without doing work.
+
+This is production-grade re-run semantics: re-triggering after a
+worker crash, an operator panic, or a backfill is safe and cheap.
+Combined with file-grain idempotency at Bronze (skip identical
+bytes across batches) and SCD2's hash-based merge at Silver
+(no spurious new versions on unchanged data), the pipeline
+supports arbitrary re-runs without data corruption.
 
 ### Fetching the full Kaggle dataset
 
