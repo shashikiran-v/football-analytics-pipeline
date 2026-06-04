@@ -1,0 +1,88 @@
+# =====================================================================
+# .dockerignore
+# =====================================================================
+# Anything in this file is excluded from the Docker build context — i.e.
+# never sent to the Docker daemon and never available to COPY in the
+# Dockerfile. Two reasons it matters:
+#
+#  1. Build speed: a smaller context uploads to the daemon faster.
+#     `.venv/` (~500 MB), `data/lake/`, and `.airflow/` add up quickly.
+#  2. Image correctness: we don't want stale runtime state (an existing
+#     SQLite DB, prior task logs, leftover lake partitions) accidentally
+#     baked into the production image and shipping to other environments.
+# =====================================================================
+
+# ---- Python / development ----
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments — must NEVER be in the image (host-specific
+# paths, wrong platform binaries, ~500 MB of bloat).
+.venv/
+venv/
+env/
+
+# ---- Pipeline runtime state ----
+# Created by the runners at runtime; lives in the bind-mounted ./data
+# at container runtime. NEVER bake into the image — that would mean
+# every container starts with stale data from whoever built the image.
+data/lake/
+data/dq_reports/
+data/metadata.db
+data/metadata.db-wal
+data/metadata.db-shm
+
+# Kaggle-fetched raw data — much too large for the image and
+# environment-specific.
+data/day1/
+data/day2/
+
+# ---- Airflow standalone state (host only) ----
+# Created by the local `airflow standalone` workflow per the README.
+# Has nothing to do with the containerised deployment.
+.airflow/
+airflow.db
+airflow.cfg
+webserver_config.py
+logs/
+plugins/
+simple_auth_manager_passwords.json.generated
+standalone_admin_password.txt
+
+# ---- Git / editor / OS ----
+.git/
+.gitignore
+.gitattributes
+.github/
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ---- Docs and dev-only files ----
+# These don't need to be in the image. README is nice for context but
+# adds bytes for no runtime benefit.
+docs/
+README.md
+*.md
+LICENSE
+
+# Tests don't need to be in the production image either. CI runs
+# them outside the container.
+tests/
+pytest.ini
+
+# Local docker-compose state
+.docker/
+docker-compose.override.yml

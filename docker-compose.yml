@@ -1,0 +1,89 @@
+# =====================================================================
+# Football Analytics Pipeline — docker-compose
+# =====================================================================
+# Single-service stack: one Airflow container running scheduler +
+# webserver + LocalExecutor worker (via `airflow standalone`).
+#
+# Why single-service: ADR-0010 establishes LocalExecutor as the
+# deliverable scope; CeleryExecutor is the named production upgrade
+# path. CeleryExecutor would require Postgres + Redis + a separate
+# worker service (4-5 containers). LocalExecutor needs none of that.
+# See ADR-0011 for the Docker-specific design decisions.
+#
+# Quick start:
+#   docker compose build           # build the image (~3 minutes first time)
+#   docker compose up              # launch — webserver at http://localhost:8080
+#   docker compose down            # stop and remove the container
+#
+# The first launch auto-generates an admin password and prints it to
+# the container's stdout. Find it with:
+#   docker compose logs airflow | grep "Login with username"
+# =====================================================================
+
+services:
+  airflow:
+    # Use the local Dockerfile rather than pulling a pre-built image.
+    # Forces every change to the pipeline source to go through a real
+    # image rebuild — no surprises about "but it worked locally."
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: football-analytics-pipeline:dev
+
+    # Run `airflow standalone` which brings up scheduler + webserver +
+    # LocalExecutor worker in one process. The init handles airflow
+    # db migrate, admin user creation, and DAG bag loading.
+    command: airflow standalone
+
+    ports:
+      # Airflow's webserver listens on 8080 inside the container.
+      # Expose it on the host's 8080 so the user can browse to
+      # http://localhost:8080.
+      - "8080:8080"
+
+    volumes:
+      # Bind-mount the host's data directory into the container.
+      # The container writes to /opt/airflow/data (which is what the
+      # runners' relative paths resolve to thanks to WORKDIR); the host
+      # sees the same files in ./data. This gives the reviewer a
+      # tangible "the lake is right here" moment when they `ls data/lake`
+      # while Airflow is running.
+      #
+      # Critically: the data/sample/ subdirectory is baked INTO the image
+      # by the Dockerfile, but the bind mount here REPLACES it with the
+      # host's data/sample/ at runtime. This is fine — same content
+      # in both places — and means the reviewer can also edit
+      # data/sample/ without rebuilding the image.
+      - ./data:/opt/airflow/data
+
+      # Mount Airflow's runtime state (DAG database, task logs, admin
+      # password file) to the host so they survive container restarts.
+      # Using a bind mount rather than a named volume so the reviewer
+      # can `cat .airflow/simple_auth_manager_passwords.json.generated`
+      # if they miss the password in the startup logs.
+      #
+      # IMPORTANT: .airflow/ is gitignored. NEVER commit Airflow's
+      # SQLite DB or the generated admin password.
+      - ./.airflow:/opt/airflow/.airflow
+
+    environment:
+      # Point Airflow at the bind-mounted runtime state directory.
+      # Without this, Airflow uses /opt/airflow as AIRFLOW_HOME, which
+      # would put the SQLite DB inside the image's read-only layer
+      # (and the container would fail to write to it).
+      AIRFLOW_HOME: /opt/airflow/.airflow
+
+      # These match the Dockerfile ENV declarations but are restated
+      # here so a reviewer reading just the compose file knows what's
+      # configured.
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      # SequentialExecutor — single-process executor that works with SQLite.
+      # This is what `airflow standalone` runs under the hood. Airflow 2.10
+      # refuses LocalExecutor + SQLite (would race on writes). See ADR-0011.
+      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+
+    # Restart policy: never. The user explicitly runs `docker compose
+    # up` and stops with Ctrl+C. We don't want a crashed pipeline to
+    # restart silently in dev (it would hide bugs).
+    restart: "no"

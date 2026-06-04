@@ -4,7 +4,7 @@
 # Common operations as short verbs. Run `make help` for the inventory.
 # =====================================================================
 
-.PHONY: help install test lint typecheck samples seed clean clean-caches clean-data clean-all
+.PHONY: help install test lint typecheck samples seed clean clean-caches clean-data clean-all docker-build docker-up docker-down docker-logs docker-shell
 
 # Use bash with strict flags so a failing command in a recipe stops the line.
 SHELL := /bin/bash
@@ -59,3 +59,19 @@ clean-all:           ## Nuclear reset: clean + drop raw Kaggle data from data/da
 	find data/day1 -mindepth 1 -not -name '.gitkeep' -delete 2>/dev/null || true
 	find data/day2 -mindepth 1 -not -name '.gitkeep' -delete 2>/dev/null || true
 	@echo "Nuclear reset complete. Raw Kaggle data also removed."
+
+docker-build:        ## Build the football-analytics-pipeline:dev image (~3 min first time).
+	docker compose build
+
+docker-up:           ## Launch Airflow in Docker. Webserver: http://localhost:8080
+	@mkdir -p .airflow data
+	docker compose up
+
+docker-down:         ## Stop and remove the Airflow container.
+	docker compose down
+
+docker-logs:         ## Tail Airflow's logs (useful for finding the admin password).
+	docker compose logs -f airflow
+
+docker-shell:        ## Open a bash shell inside the running Airflow container.
+	docker compose exec airflow bash
