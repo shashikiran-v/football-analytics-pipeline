@@ -76,4 +76,5 @@ old one's Status field to reflect that.
 | 0007   | Gold Layer Storage and Analytics    | Accepted |
 | 0008   | Cross-Batch Semantics               | Accepted |
 | 0009   | Spark Engine Scope and Stub Design  | Accepted |
-| 0010   | Airflow Orchestration Design        | Accepted |
+| 0010   | Airflow Orchestration Design        | Accepted (amended 2026-06-04) |
+| 0011   | Docker Deployment Design            | Accepted |

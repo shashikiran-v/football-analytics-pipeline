@@ -93,8 +93,8 @@ project/
 | 6     | Day-2 incremental snapshot + SCD2 validation       | ✅ Done  |
 | 7     | Spark engine: stub + design doc *(deliberate scope choice, see ADR-0009)* | ✅ Done |
 | 8     | Airflow DAG + idempotency wiring                   | ✅ Done  |
-| 9     | Docker + docker-compose stack                      | ⏳ Next  |
-| 10    | PII anonymisation, Superset, CI, README polish     | ⏳       |
+| 9     | Docker + docker-compose stack                      | ✅ Done  |
+| 10    | PII anonymisation, Superset, CI, README polish     | ⏳ Next  |
 
 ### What's in Phase 2a
 
@@ -579,6 +579,64 @@ tasks reporting "skipped." Production-grade re-run semantics.
 
 Total test count after Phase 8: **435 passing, 1 skipped**
 (adds: airflow_wrappers 9, airflow_dag 9, chain_of_skips 3).
+
+### What's in Phase 9
+
+Phase 9 packages the whole stack into Docker. One command,
+`docker compose up`, brings up Airflow with the pipeline code,
+dependencies, and DAGs all baked in. A reviewer can launch the
+complete demonstration in ~3 minutes (first build) or ~10 seconds
+(subsequent runs).
+
+What this phase delivers:
+
+- **`Dockerfile`** extending `apache/airflow:2.10.3-python3.12` —
+  pins Airflow + Python versions matching our test suite, installs
+  `requirements.txt` inside the image, copies `src/`, `dags/`,
+  `configs/`, and `data/sample/` into `/opt/airflow/`. Layer
+  ordering optimised for fast rebuilds on source-only changes.
+- **`docker-compose.yml`** with a single service running
+  `airflow standalone` inside the container. Two bind mounts:
+  - `./data → /opt/airflow/data` so the reviewer sees the lake on
+    their host filesystem while Airflow runs (tangible demo, not
+    hidden in a Docker volume)
+  - `./.airflow → /opt/airflow/.airflow` so Airflow's SQLite DB
+    and admin password persist across container restarts
+- **`.dockerignore`** excludes `.venv/`, runtime state, caches,
+  tests, and docs from the build context — keeps the image lean.
+- **Five `make docker-*` targets** for ergonomic workflow:
+  `docker-build`, `docker-up`, `docker-down`, `docker-logs`,
+  `docker-shell`.
+- **Cross-environment idempotency proven**: the same `data/metadata.db`
+  is read by host-side Airflow runs (Phase 8) AND Docker-container
+  Airflow runs (Phase 9). Both correctly recognise prior successful
+  batches and skip them, demonstrating that pipeline state is
+  genuinely portable across execution environments.
+- **ADR-0011** captures the design choices: single-service compose,
+  custom Dockerfile, bind mounts, SQLite + SequentialExecutor.
+  Also documents four real-world gotchas surfaced during the build:
+  `pip install --user` inside a venv (rejected by pip), stale
+  `airflow.cfg` from prior host runs leaking absolute Mac paths
+  into the container, the SequentialExecutor-vs-LocalExecutor
+  correction (Airflow 2.10 forbids LocalExecutor + SQLite), and
+  the *inverse* problem — container cfg polluting the host
+  filesystem after running Docker, breaking host `pytest tests/`
+  until `.airflow/` is wiped. Same root cause in both directions
+  (bind mount sharing the cfg between environments).
+- **ADR-0010 amended** to acknowledge the executor misnaming —
+  evolution of understanding kept visible rather than rewritten.
+
+The Docker stack uses **`SequentialExecutor` + SQLite**, matching
+what `airflow standalone` actually runs (which is also what we ran
+in Phase 8 — we just incorrectly called it LocalExecutor at the
+time). The DAG is a linear chain so there's no parallelism to give
+up. Production upgrade path: **LocalExecutor + Postgres** for
+parallel branches, or full **CeleryExecutor + Postgres + Redis** for
+distributed execution. Same scope-discipline pattern as Spark
+(ADR-0009).
+
+Test count unchanged in Phase 9 — Docker is a deployment artifact,
+not new runtime code. **435 passing, 1 skipped.**
 
 ---
 
@@ -1077,6 +1135,103 @@ Combined with file-grain idempotency at Bronze (skip identical
 bytes across batches) and SCD2's hash-based merge at Silver
 (no spurious new versions on unchanged data), the pipeline
 supports arbitrary re-runs without data corruption.
+
+### Running with Docker
+
+Phase 9 packages the whole stack into a single Docker image with a
+single-service compose file. One command brings up the pipeline.
+
+Prerequisites: Docker Desktop installed and running (the whale icon
+in your menu bar should be steady, not animating).
+
+```bash
+# 1. First-time setup: build the image (~3-5 minutes — pulls Airflow
+#    base + installs requirements.txt). Subsequent builds are ~10s.
+make docker-build
+
+# 2. Launch. Streams logs to terminal. Watch for the admin password
+#    line: "standalone | Login with username: admin  password: <RANDOM>"
+make docker-up
+
+# 3. In your browser: http://localhost:8080
+#    Log in with username=admin, password from step 2.
+#    Toggle the DAG on, click ▶ Trigger DAG, watch four tasks go green.
+
+# 4. From a SEPARATE terminal, prove the bind mount works:
+ls data/lake/gold/top_scorers_by_season/    # data on host while
+                                            # container is running
+
+sqlite3 data/metadata.db "SELECT * FROM pipeline_runs"
+# Shows the layer-grain success record — same DB that host Airflow
+# uses if you ran Phase 8 locally.
+
+# 5. When done: Ctrl+C in the docker-up terminal, then:
+make docker-down
+```
+
+Three gotchas worth knowing about (each documented in ADR-0011):
+
+1. **If you previously ran local `airflow standalone` from Phase 8**,
+   the `.airflow/` directory on disk contains a `airflow.cfg` with
+   absolute host paths (`/Users/...`). The container can't write to
+   those paths inside its filesystem. Before first `docker compose
+   up`, wipe the stale state:
+
+   ```bash
+   rm -rf .airflow && mkdir -p .airflow
+   ```
+
+2. **The container uses `SequentialExecutor`**, not `LocalExecutor`.
+   Airflow 2.10 forbids `LocalExecutor + SQLite` at startup (write
+   races on the SQLite file). `SequentialExecutor` is what `airflow
+   standalone` uses under the hood anyway — single-process,
+   single-task-at-a-time, exactly right for our linear-chain DAG.
+
+3. **Bind-mount permissions** can occasionally trip up on Docker
+   Desktop for Mac. If you see permission errors writing to
+   `/opt/airflow/.airflow/` inside the container, ensure
+   Docker Desktop has full disk access (System Settings → Privacy
+   & Security → Full Disk Access → enable Docker.app).
+
+### Switching between host and Docker Airflow
+
+The `./.airflow/` directory is **bind-mounted into the container**.
+This is deliberate — it gives the host visibility into Airflow's
+state. But it has a side effect: whichever environment (host or
+container) writes `airflow.cfg` last wins, and the cfg embeds
+*absolute paths* (log directories, etc).
+
+Symptoms when paths leak across environments:
+
+- **Container fails to start** with `PermissionError: '/Users/...'` —
+  host paths got into the cfg, container can't write to them.
+- **Host `pytest tests/` fails** with `PermissionError: '/opt/airflow'`
+  — container paths got into the cfg, host can't write to them.
+
+Same root cause both directions. **Fix is the same**: wipe `.airflow/`
+and let the current environment regenerate it cleanly.
+
+#### Going from host Airflow → Docker:
+
+```bash
+rm -rf .airflow && mkdir -p .airflow
+# Container will regenerate cfg with container-internal paths
+docker compose up
+```
+
+#### Going from Docker → host Airflow (e.g. to run pytest):
+
+```bash
+docker compose down                 # stop the container
+rm -rf .airflow && mkdir -p .airflow
+export AIRFLOW_HOME=$(pwd)/.airflow # tell host Airflow where to look
+airflow db migrate                  # regenerate cfg with host paths
+pytest tests/                       # should now pass
+```
+
+For a clean reviewer experience, **pick one path (Docker OR host
+standalone) and stick with it**. The wipe-between-environments
+discipline is only relevant for development iteration.
 
 ### Fetching the full Kaggle dataset
 

@@ -2,7 +2,37 @@
 
 ## Status
 
-Accepted — 2026-06-03
+Accepted — 2026-06-03  
+Amended — 2026-06-04 (executor correction; see Amendment note below)
+
+## Amendment note (2026-06-04)
+
+When this ADR was written, it claimed `LocalExecutor` as the runtime
+executor for `airflow standalone`. **That was incorrect.** `airflow
+standalone` actually uses `SequentialExecutor` under the hood. The
+mismatch surfaced during Phase 9's Docker integration when Airflow
+2.10 refused to start with `LocalExecutor + SQLite`:
+
+```
+AirflowConfigException: error: cannot use SQLite with the LocalExecutor
+```
+
+The original text below has been kept intact rather than rewritten,
+because the evolution of understanding is itself useful documentation.
+Read the document with this correction in mind:
+
+- Where the original text says "LocalExecutor," substitute
+  "SequentialExecutor" (the single-process executor that `airflow
+  standalone` uses, which works with SQLite).
+- The "CeleryExecutor as production upgrade path" framing remains
+  correct, but the more precise upgrade is **LocalExecutor + Postgres**
+  (a less-distributed step) before CeleryExecutor + Postgres + Redis
+  (the fully distributed step).
+
+ADR-0011 (Docker Deployment Design) covers the executor correction
+in detail with the Airflow 2.10 constraint that surfaced it.
+
+---
 
 ## Context
 
