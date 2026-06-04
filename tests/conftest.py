@@ -57,8 +57,17 @@ def _isolate_metadata_db(tmp_path: Path, monkeypatch) -> Iterator[None]:
     We point the config's metadata_db path at a temp location by
     setting DATA_ROOT before the config is loaded — the config loader
     interpolates ${DATA_ROOT} into paths.
+
+    Also: PII tokenisation is OFF by default in tests. The vast
+    majority of test fixtures and assertions are written against
+    plaintext player names (e.g. "Bukayo Saka") because the rest of
+    the pipeline doesn't care about PII semantics. Tests that
+    specifically want to verify PII tokenisation (see
+    tests/test_pii.py) override this by setting PII_ENABLED=true
+    via monkeypatch.setenv inside the test.
     """
     monkeypatch.setenv("DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("PII_ENABLED", "false")
     # Clear cached config / engine so they re-read the new env.
     from src.engines import factory as factory_mod
     from src.utils import config as cfg_mod

@@ -222,6 +222,74 @@ def build_dim_date(
 # ---------------------------------------------------------------------------
 
 
+def _maybe_apply_pii_tokenisation(
+    *,
+    projected: DataFrame,
+    players_source: SourceDefinition,
+    engine: DataFrameEngine,
+) -> DataFrame:
+    """
+    Apply PII tokenisation to the projected dim_players rows if:
+      * The source declares a `pii.hash_columns` block in sources.yaml
+      * The runtime config has `pii.enabled: true`
+
+    Otherwise return the input unchanged. This keeps dev environments
+    (where setting PII_SALT is friction) usable, while production
+    deployments enforce tokenisation via config.
+
+    Returns the same DataFrame with PII columns tokenised in place.
+
+    Pandas-only for now: the engine's `to_records` materialises the
+    frame, the tokeniser modifies it, and we replace the underlying
+    DataFrame. A future Spark implementation would route this through
+    a `pandas_udf` rather than calling tokenize_columns_in_dataframe
+    directly (see ADR-0009 for the engine-portability strategy).
+    """
+    from src.pii import tokenize_columns_in_dataframe
+    from src.utils.config import get_config
+
+    cfg = get_config()
+    if not cfg.pii.enabled:
+        log.info(
+            "pii_tokenisation_disabled",
+            reason="config.pii.enabled is false",
+        )
+        return projected
+
+    if players_source.pii is None:
+        log.info(
+            "pii_tokenisation_no_columns",
+            source=players_source.name,
+            reason="source declares no pii.hash_columns",
+        )
+        return projected
+
+    hash_columns = players_source.pii.hash_columns
+
+    # The engine abstraction guarantees we can extract the underlying
+    # DataFrame as a list of records; for the Pandas engine specifically,
+    # the projected object IS already a pandas.DataFrame, so we can
+    # mutate it directly. Spark would route this through a pandas_udf
+    # at the engine level (see ADR-0012's notes on engine portability).
+    import pandas as pd
+
+    if not isinstance(projected, pd.DataFrame):
+        raise NotImplementedError(
+            f"PII tokenisation currently requires the Pandas engine. "
+            f"Got {type(projected).__name__}. See ADR-0012 for the "
+            f"Spark portability sketch."
+        )
+
+    log.info(
+        "pii_tokenisation_starting",
+        source=players_source.name,
+        columns=hash_columns,
+        rows=len(projected),
+    )
+
+    return tokenize_columns_in_dataframe(projected, hash_columns)
+
+
 def build_dim_players(
     *,
     bronze_players: DataFrame,
@@ -289,6 +357,22 @@ def build_dim_players(
     # transformations we just added, minus the layer marker).
     silver_cols = [c for c in engine.columns(transformed) if c != BRONZE_BATCH_COLUMN]
     projected = engine.select(transformed, silver_cols)
+
+    # --- PII tokenisation ----------------------------------------------
+    # If the source declares pii.hash_columns AND pii.enabled is true,
+    # replace each PII column's values with a salted-SHA-256 token
+    # BEFORE the SCD2 merge. The hash-based change detection then
+    # operates on tokenised values, so tokenisation never looks like
+    # a change (deterministic same-input-same-token guarantee).
+    #
+    # See ADR-0012 for the design rationale (why salted SHA-256, what
+    # threats this addresses, what production hardening looks like).
+    # See src/pii/tokenize.py for the tokeniser itself.
+    projected = _maybe_apply_pii_tokenisation(
+        projected=projected,
+        players_source=players_source,
+        engine=engine,
+    )
 
     # --- Effective-date convention for first-run vs subsequent runs ----
     # For the FIRST run, set effective_date to a far-past sentinel so
