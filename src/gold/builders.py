@@ -26,11 +26,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import duckdb
-import pandas as pd
 
 from src.gold.artifacts import GoldArtifact
 from src.utils.logging import get_logger
-
 
 log = get_logger(__name__)
 

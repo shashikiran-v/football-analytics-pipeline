@@ -21,6 +21,7 @@ import pytest
 def _airflow_available() -> bool:
     try:
         import airflow  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -52,12 +53,14 @@ def dagbag():
     # call repeatedly. Without this, tests fail on a fresh install
     # with sqlite3.OperationalError: no such table: dag.
     import subprocess
+
     subprocess.run(
         ["airflow", "db", "migrate"],
         check=False,  # already-initialised DB returns non-zero noise
         capture_output=True,
     )
     from airflow.models import DagBag
+
     return DagBag(dag_folder=str(DAGS_FOLDER), include_examples=False)
 
 
@@ -71,9 +74,7 @@ class TestDagParses:
         """The DAG file must parse without any import or syntax errors.
         Airflow's DagBag captures import failures into a dict; an empty
         dict means everything imported cleanly."""
-        assert dagbag.import_errors == {}, (
-            f"DAG import errors: {dagbag.import_errors}"
-        )
+        assert dagbag.import_errors == {}, f"DAG import errors: {dagbag.import_errors}"
 
     def test_dag_is_registered(self, dagbag):
         assert DAG_ID in dagbag.dag_ids
@@ -128,9 +129,7 @@ class TestDagConfig:
         # Airflow 2.4+ exposes schedule_interval or timetable.
         # @daily resolves to "@daily" or a timedelta(days=1) depending
         # on version; both are valid daily schedules.
-        schedule = getattr(dag, "schedule_interval", None) or getattr(
-            dag, "schedule", None
-        )
+        schedule = getattr(dag, "schedule_interval", None) or getattr(dag, "schedule", None)
         assert schedule == "@daily" or str(schedule) == "@daily"
 
     def test_default_retries_is_one(self, dagbag):
@@ -139,10 +138,9 @@ class TestDagConfig:
         real issues behind churn."""
         dag = dagbag.get_dag(DAG_ID)
         for task in dag.tasks:
-            assert task.retries == 1, (
-                f"Task {task.task_id} has retries={task.retries}, "
-                f"expected 1 (per ADR-0010)"
-            )
+            assert (
+                task.retries == 1
+            ), f"Task {task.task_id} has retries={task.retries}, expected 1 (per ADR-0010)"
 
     def test_max_active_runs_one(self, dagbag):
         """Only one DAG run at a time. Prevents two batches from racing

@@ -40,14 +40,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.engines.base import DataFrame, DataFrameEngine
 from src.utils.logging import get_logger
-
 
 log = get_logger(__name__)
 
@@ -103,7 +102,9 @@ class NotNullRule(_RuleBase):
         return f"not_null:{self.source}:{','.join(self.columns)}"
 
     def evaluate(
-        self, df: DataFrame, engine: DataFrameEngine,
+        self,
+        df: DataFrame,
+        engine: DataFrameEngine,
         context: DQEvalContext,
     ) -> list[bool]:
         records = engine.to_records(df)
@@ -138,7 +139,9 @@ class RangeRule(_RuleBase):
         return f"range:{self.source}:{self.column}"
 
     def evaluate(
-        self, df: DataFrame, engine: DataFrameEngine,
+        self,
+        df: DataFrame,
+        engine: DataFrameEngine,
         context: DQEvalContext,
     ) -> list[bool]:
         records = engine.to_records(df)
@@ -183,7 +186,9 @@ class UniqueRule(_RuleBase):
         return f"unique:{self.source}:{','.join(self.columns)}"
 
     def evaluate(
-        self, df: DataFrame, engine: DataFrameEngine,
+        self,
+        df: DataFrame,
+        engine: DataFrameEngine,
         context: DQEvalContext,
     ) -> list[bool]:
         records = engine.to_records(df)
@@ -218,15 +223,15 @@ class ForeignKeyRule(_RuleBase):
         )
 
     def evaluate(
-        self, df: DataFrame, engine: DataFrameEngine,
+        self,
+        df: DataFrame,
+        engine: DataFrameEngine,
         context: DQEvalContext,
     ) -> list[bool]:
         # The runner pre-populates context.fk_lookups for every
         # (source, column) referenced by any FK rule. We just look up
         # the set of valid values; per-row check is O(1).
-        valid_set = context.fk_lookups.get(
-            (self.references_source, self.references_column)
-        )
+        valid_set = context.fk_lookups.get((self.references_source, self.references_column))
         if valid_set is None:
             log.error(
                 "fk_lookup_missing",
@@ -269,13 +274,15 @@ class SchemaRule(_RuleBase):
     """
 
     rule_type: Literal["schema"]
-    expected_columns: dict[str, str]      # column_name -> type tag (matches sources.yaml)
+    expected_columns: dict[str, str]  # column_name -> type tag (matches sources.yaml)
 
     def id(self) -> str:
         return f"schema:{self.source}"
 
     def evaluate(
-        self, df: DataFrame, engine: DataFrameEngine,
+        self,
+        df: DataFrame,
+        engine: DataFrameEngine,
         context: DQEvalContext,
     ) -> list[bool]:
         actual_cols = set(engine.columns(df))
@@ -299,7 +306,7 @@ class SchemaRule(_RuleBase):
 
 
 Rule = Annotated[
-    Union[NotNullRule, RangeRule, UniqueRule, ForeignKeyRule, SchemaRule],
+    NotNullRule | RangeRule | UniqueRule | ForeignKeyRule | SchemaRule,
     Field(discriminator="rule_type"),
 ]
 

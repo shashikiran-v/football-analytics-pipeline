@@ -31,10 +31,11 @@ loading and set-building for one round of evaluation.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from src.bronze.resolver import resolve_bronze_partition
 from src.dq.rules import (
     SEVERITY_CRITICAL,
     SEVERITY_WARNING,
@@ -43,10 +44,8 @@ from src.dq.rules import (
     fk_dependencies,
     rules_for_source,
 )
-from src.bronze.resolver import resolve_bronze_partition
 from src.engines.base import DataFrame, DataFrameEngine
 from src.utils.logging import get_logger
-
 
 log = get_logger(__name__)
 
@@ -66,7 +65,7 @@ class DQRuleOutcome:
     """One rule's outcome against one source's data."""
 
     rule_id: str
-    severity: str                # 'critical' | 'warning'
+    severity: str  # 'critical' | 'warning'
     rows_evaluated: int
     rows_failed: int
 
@@ -84,16 +83,14 @@ class DQResult:
     source_name: str
     rows_in: int
     clean_rows: DataFrame
-    failing_rows: DataFrame | None      # None when no critical failures
+    failing_rows: DataFrame | None  # None when no critical failures
     outcomes: list[DQRuleOutcome]
 
     @property
     def rows_clean(self) -> int:
         # Computed via outcomes' length-based info; the engine wouldn't
         # be in scope here. We use the difference.
-        return self.rows_in - (
-            0 if self.failing_rows is None else len(_failing_reason_list(self))
-        )
+        return self.rows_in - (0 if self.failing_rows is None else len(_failing_reason_list(self)))
 
     @property
     def critical_failures(self) -> list[DQRuleOutcome]:
@@ -151,12 +148,15 @@ def build_fk_lookups(
     lookups: dict[tuple[str, str], set[Any]] = {}
     for (source, column), consumers in deps.items():
         partition_path = resolve_bronze_partition(
-            bronze_root=bronze_root, source_name=source, batch_id=batch_id,
+            bronze_root=bronze_root,
+            source_name=source,
+            batch_id=batch_id,
         )
         if partition_path is None:
             log.warning(
                 "fk_lookup_source_missing",
-                source=source, column=column,
+                source=source,
+                column=column,
                 consumers=consumers,
                 reason="no current-batch partition AND no prior ingestion in audit DAO",
             )
@@ -165,12 +165,11 @@ def build_fk_lookups(
             continue
         df = engine.read_parquet(partition_path)
         records = engine.to_records(engine.select(df, [column]))
-        lookups[(source, column)] = {
-            r[column] for r in records if r[column] is not None
-        }
+        lookups[(source, column)] = {r[column] for r in records if r[column] is not None}
         log.info(
             "fk_lookup_built",
-            source=source, column=column,
+            source=source,
+            column=column,
             valid_value_count=len(lookups[(source, column)]),
         )
     return lookups
@@ -234,18 +233,22 @@ def run_dq_for_source(
         if len(passes) != total_rows:
             log.error(
                 "dq_rule_returned_wrong_length",
-                rule_id=rule.id(), expected=total_rows, got=len(passes),
+                rule_id=rule.id(),
+                expected=total_rows,
+                got=len(passes),
             )
             # Defensive: treat all rows as passing for this rule so a
             # bug in one rule doesn't blanket-fail a whole source.
             passes = [True] * total_rows
         rows_failed = sum(1 for p in passes if not p)
-        outcomes.append(DQRuleOutcome(
-            rule_id=rule.id(),
-            severity=rule.severity,
-            rows_evaluated=total_rows,
-            rows_failed=rows_failed,
-        ))
+        outcomes.append(
+            DQRuleOutcome(
+                rule_id=rule.id(),
+                severity=rule.severity,
+                rows_evaluated=total_rows,
+                rows_failed=rows_failed,
+            )
+        )
         per_rule_pass.append((rule, passes))
         log.info(
             "dq_rule_evaluated",
@@ -288,10 +291,10 @@ def run_dq_for_source(
         rows_in=total_rows,
         rows_clean=len(clean_records),
         rows_failing=len(failing_records),
-        critical_failures=sum(1 for o in outcomes
-                               if o.severity == SEVERITY_CRITICAL and o.rows_failed),
-        warnings=sum(1 for o in outcomes
-                     if o.severity == SEVERITY_WARNING and o.rows_failed),
+        critical_failures=sum(
+            1 for o in outcomes if o.severity == SEVERITY_CRITICAL and o.rows_failed
+        ),
+        warnings=sum(1 for o in outcomes if o.severity == SEVERITY_WARNING and o.rows_failed),
     )
 
     # Build the result DataFrames. For Pandas this is straightforward;
@@ -299,9 +302,11 @@ def run_dq_for_source(
     # pattern as scd2._records_to_df.
     clean_df = _records_to_df(clean_records, original_df=df, engine=engine)
     failing_df = (
-        _records_to_df(failing_records, original_df=df, engine=engine,
-                       extra_columns=[DQ_FAILURE_REASON_COLUMN])
-        if failing_records else None
+        _records_to_df(
+            failing_records, original_df=df, engine=engine, extra_columns=[DQ_FAILURE_REASON_COLUMN]
+        )
+        if failing_records
+        else None
     )
 
     return DQResult(
@@ -334,6 +339,7 @@ def _records_to_df(
     """
     if engine.kind == "pandas":
         import pandas as pd
+
         if not records:
             # Empty result: preserve the original schema by using the
             # original DataFrame's columns. Extra columns added as needed.

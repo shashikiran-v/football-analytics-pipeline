@@ -47,7 +47,6 @@ from pydantic import BaseModel, ConfigDict
 
 from src.utils.logging import get_logger
 
-
 log = get_logger(__name__)
 
 # The conventional manifest filename, sibling to the source CSVs.
@@ -79,11 +78,11 @@ class Manifest(_Frozen):
     """The full vendor manifest."""
 
     manifest_version: int
-    vendor: str                         # 'kaggle' | 'http' | ...
-    dataset: str                        # vendor's identifier for the dataset
-    dataset_version: int | str          # int for Kaggle, possibly str elsewhere
-    vendor_last_updated: str            # ISO8601, the AUTHORITATIVE vendor ts
-    fetched_at: str                     # ISO8601, when our fetcher ran
+    vendor: str  # 'kaggle' | 'http' | ...
+    dataset: str  # vendor's identifier for the dataset
+    dataset_version: int | str  # int for Kaggle, possibly str elsewhere
+    vendor_last_updated: str  # ISO8601, the AUTHORITATIVE vendor ts
+    fetched_at: str  # ISO8601, when our fetcher ran
     files: dict[str, ManifestFileEntry]
 
     def file_entry(self, filename: str) -> ManifestFileEntry | None:
@@ -118,9 +117,7 @@ def load_manifest(directory: str | Path) -> Manifest | None:
     try:
         raw = json.loads(manifest_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
-        raise ManifestError(
-            f"Manifest at {manifest_path} is not valid JSON: {e}"
-        ) from e
+        raise ManifestError(f"Manifest at {manifest_path} is not valid JSON: {e}") from e
 
     if not isinstance(raw, dict):
         raise ManifestError(
@@ -139,9 +136,7 @@ def load_manifest(directory: str | Path) -> Manifest | None:
     except Exception as e:
         # pydantic ValidationError wraps under here; the message is
         # readable but we add context about which file.
-        raise ManifestError(
-            f"Manifest at {manifest_path} failed validation: {e}"
-        ) from e
+        raise ManifestError(f"Manifest at {manifest_path} failed validation: {e}") from e
 
     log.info(
         "manifest_loaded",

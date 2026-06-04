@@ -21,8 +21,9 @@ A few pandas gotchas worth knowing while reading this:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Literal
 
 import pandas as pd
 import pyarrow as pa
@@ -30,7 +31,6 @@ import pyarrow.parquet as pq
 
 from src.engines.base import DataFrame, DataFrameEngine, WriteMode
 from src.utils.hashing import HASH_SEPARATOR, NULL_SENTINEL, hash_row
-
 
 # Map our type tags -> pandas / pyarrow dtypes. We deliberately use
 # pandas extension dtypes (Int64 with capital I) so nullable integers
@@ -104,6 +104,7 @@ class PandasEngine(DataFrameEngine):
         if mode == "overwrite" and target.exists() and not partition_by:
             if target.is_dir():
                 import shutil
+
                 shutil.rmtree(target)
             else:
                 target.unlink()
@@ -119,6 +120,7 @@ class PandasEngine(DataFrameEngine):
             # subdirectories present in the incoming dataframe.
             if mode == "overwrite" and target.exists():
                 import shutil
+
                 partition_values_by_col: dict[str, set] = {}
                 for col in partition_by:
                     partition_values_by_col[col] = set(df[col].unique())
@@ -168,9 +170,7 @@ class PandasEngine(DataFrameEngine):
         safe = {k: v for k, v in mapping.items() if k in df.columns}
         return df.rename(columns=safe).copy()
 
-    def filter_predicate(
-        self, df: DataFrame, predicate: Callable[[dict], bool]
-    ) -> DataFrame:
+    def filter_predicate(self, df: DataFrame, predicate: Callable[[dict], bool]) -> DataFrame:
         mask = df.apply(lambda r: predicate(r.to_dict()), axis=1)
         return df[mask].copy()
 
@@ -252,9 +252,7 @@ class PandasEngine(DataFrameEngine):
             joined = piece if i == 0 else joined + HASH_SEPARATOR + piece
 
         out = df.copy()
-        out[hash_column] = joined.map(
-            lambda s: hashlib.md5(s.encode("utf-8")).hexdigest()
-        )
+        out[hash_column] = joined.map(lambda s: hashlib.md5(s.encode("utf-8")).hexdigest())
         return out
 
     # -----------------------------------------------------------------
@@ -316,9 +314,8 @@ class PandasEngine(DataFrameEngine):
         # min_periods=1 so the rolling avg is defined from the first row;
         # otherwise the first window_rows-1 rows would be NaN, which is
         # surprising in a "trend" column.
-        out[output_column] = (
-            out.groupby(partition_by, dropna=False)[value_column]
-            .transform(lambda s: s.rolling(window=window_rows, min_periods=1).mean())
+        out[output_column] = out.groupby(partition_by, dropna=False)[value_column].transform(
+            lambda s: s.rolling(window=window_rows, min_periods=1).mean()
         )
         return out
 
@@ -349,9 +346,7 @@ class PandasEngine(DataFrameEngine):
             else:
                 # Two-stage cast for nullable numeric types: convert
                 # via float64 first to handle stray strings like "" gracefully.
-                if tag in {"int", "long"}:
-                    out[col] = pd.to_numeric(out[col], errors="coerce").astype(pd_dtype)
-                elif tag == "float":
+                if tag in {"int", "long"} or tag == "float":
                     out[col] = pd.to_numeric(out[col], errors="coerce").astype(pd_dtype)
                 else:
                     out[col] = out[col].astype(pd_dtype)
@@ -359,6 +354,7 @@ class PandasEngine(DataFrameEngine):
 
 
 __all__ = ["PandasEngine"]
+
 
 # Verify our vectorised hash matches the reference implementation. Catches
 # any future drift between the two paths at import time.

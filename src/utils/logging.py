@@ -29,7 +29,6 @@ import structlog
 
 from src.utils.config import get_config
 
-
 _CONFIGURED = False
 
 

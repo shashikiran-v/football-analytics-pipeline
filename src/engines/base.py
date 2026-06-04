@@ -39,8 +39,9 @@ Anti-goals
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Literal
 
 # Opaque DataFrame handle. Engine implementations narrow this internally.
 DataFrame = Any

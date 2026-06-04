@@ -61,11 +61,11 @@ See also
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Literal
 
 from src.engines.base import DataFrame, DataFrameEngine, WriteMode
-
 
 _STUB_MESSAGE = (
     "Spark engine is not implemented (deliberate scope decision — "
@@ -136,17 +136,13 @@ class SparkEngine(DataFrameEngine):
     def rename(self, df: DataFrame, mapping: dict[str, str]) -> DataFrame:
         raise NotImplementedError(_STUB_MESSAGE)
 
-    def filter_predicate(
-        self, df: DataFrame, predicate: Callable[[dict], bool]
-    ) -> DataFrame:
+    def filter_predicate(self, df: DataFrame, predicate: Callable[[dict], bool]) -> DataFrame:
         raise NotImplementedError(_STUB_MESSAGE)
 
     def filter_eq(self, df: DataFrame, column: str, value: Any) -> DataFrame:
         raise NotImplementedError(_STUB_MESSAGE)
 
-    def filter_isin(
-        self, df: DataFrame, column: str, values: list[Any]
-    ) -> DataFrame:
+    def filter_isin(self, df: DataFrame, column: str, values: list[Any]) -> DataFrame:
         raise NotImplementedError(_STUB_MESSAGE)
 
     def filter_not_null(self, df: DataFrame, columns: list[str]) -> DataFrame:
@@ -166,9 +162,7 @@ class SparkEngine(DataFrameEngine):
     # Column derivation
     # -----------------------------------------------------------------
 
-    def with_constant_column(
-        self, df: DataFrame, name: str, value: Any
-    ) -> DataFrame:
+    def with_constant_column(self, df: DataFrame, name: str, value: Any) -> DataFrame:
         raise NotImplementedError(_STUB_MESSAGE)
 
     def with_derived_column(
@@ -206,9 +200,7 @@ class SparkEngine(DataFrameEngine):
     def union(self, dfs: list[DataFrame]) -> DataFrame:
         raise NotImplementedError(_STUB_MESSAGE)
 
-    def distinct(
-        self, df: DataFrame, subset: list[str] | None = None
-    ) -> DataFrame:
+    def distinct(self, df: DataFrame, subset: list[str] | None = None) -> DataFrame:
         raise NotImplementedError(_STUB_MESSAGE)
 
     def group_by_agg(

@@ -35,16 +35,14 @@ Design notes
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from functools import lru_cache
 from pathlib import Path
-from typing import Iterator
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.utils.config import get_config
 from src.utils.logging import get_logger
-
 
 log = get_logger(__name__)
 
@@ -69,9 +67,10 @@ class SCD2Spec(_Frozen):
     """SCD Type 2 configuration for a source."""
 
     tracked_columns: list[str] = Field(
-        ..., min_length=1,
+        ...,
+        min_length=1,
         description="Columns whose changes open a new SCD2 version. "
-                    "Hashed together to detect changes cheaply.",
+        "Hashed together to detect changes cheaply.",
     )
 
 
@@ -79,9 +78,10 @@ class PIISpec(_Frozen):
     """PII anonymisation configuration for a source."""
 
     hash_columns: list[str] = Field(
-        ..., min_length=1,
+        ...,
+        min_length=1,
         description="Columns whose values are salted-SHA-256 hashed "
-                    "at the Bronze -> Silver boundary.",
+        "at the Bronze -> Silver boundary.",
     )
 
 
@@ -91,7 +91,7 @@ class AuditSpec(_Frozen):
     expected_min_rows: int | None = Field(
         default=None,
         description="If set, ingesting a snapshot with fewer rows than "
-                    "this raises a WARN-level DQ event.",
+        "this raises a WARN-level DQ event.",
     )
 
 
@@ -115,7 +115,7 @@ class SourceDefinition(_Frozen):
     model_config = ConfigDict(
         frozen=True,
         extra="forbid",
-        populate_by_name=True,           # accept 'schema' from YAML, expose as schema_
+        populate_by_name=True,  # accept 'schema' from YAML, expose as schema_
     )
 
     # -- Convenience accessors so callers don't reach into the dict --
@@ -187,9 +187,7 @@ class SourceRegistry:
         try:
             return self._by_name[name]
         except KeyError:
-            raise KeyError(
-                f"Unknown source: {name!r}. Known: {sorted(self._by_name)}"
-            ) from None
+            raise KeyError(f"Unknown source: {name!r}. Known: {sorted(self._by_name)}") from None
 
     def __contains__(self, name: object) -> bool:
         return isinstance(name, str) and name in self._by_name

@@ -33,7 +33,6 @@ from src.metadata import audit
 from src.metadata.audit import FileStatus
 from src.metadata.db import init_db
 
-
 # ---------------------------------------------------------------------------
 # Helpers — small synthetic source + tmp CSV
 # ---------------------------------------------------------------------------
@@ -85,7 +84,11 @@ def raw_root_with_widgets(tmp_path):
 
 class TestWriteBronzeSource:
     def test_happy_path_returns_written_result(
-        self, tmp_path, raw_root_with_widgets, engine, fresh_db,
+        self,
+        tmp_path,
+        raw_root_with_widgets,
+        engine,
+        fresh_db,
     ):
         result = write_bronze_source(
             source=_minimal_source(),
@@ -100,7 +103,11 @@ class TestWriteBronzeSource:
         assert result.error_message is None
 
     def test_happy_path_creates_hive_partition(
-        self, tmp_path, raw_root_with_widgets, engine, fresh_db,
+        self,
+        tmp_path,
+        raw_root_with_widgets,
+        engine,
+        fresh_db,
     ):
         bronze_root = tmp_path / "bronze"
         write_bronze_source(
@@ -117,7 +124,11 @@ class TestWriteBronzeSource:
         assert len(parquet_files) >= 1
 
     def test_written_parquet_contains_batch_id_column(
-        self, tmp_path, raw_root_with_widgets, engine, fresh_db,
+        self,
+        tmp_path,
+        raw_root_with_widgets,
+        engine,
+        fresh_db,
     ):
         bronze_root = tmp_path / "bronze"
         write_bronze_source(
@@ -134,7 +145,11 @@ class TestWriteBronzeSource:
         assert BATCH_ID_COLUMN in cols
 
     def test_audit_row_transitions_to_ingested(
-        self, tmp_path, raw_root_with_widgets, engine, fresh_db,
+        self,
+        tmp_path,
+        raw_root_with_widgets,
+        engine,
+        fresh_db,
     ):
         write_bronze_source(
             source=_minimal_source(),
@@ -150,7 +165,10 @@ class TestWriteBronzeSource:
         assert rows[0].bronze_row_count == 3
 
     def test_missing_file_returns_failed_result(
-        self, tmp_path, engine, fresh_db,
+        self,
+        tmp_path,
+        engine,
+        fresh_db,
     ):
         # raw_root exists but widgets.csv is NOT inside it
         empty_root = tmp_path / "empty"
@@ -167,7 +185,11 @@ class TestWriteBronzeSource:
         assert "not found" in result.error_message
 
     def test_file_grain_idempotency_skips_in_new_batch(
-        self, tmp_path, raw_root_with_widgets, engine, fresh_db,
+        self,
+        tmp_path,
+        raw_root_with_widgets,
+        engine,
+        fresh_db,
     ):
         # Ingest under B1, then attempt B2 with the same file content.
         write_bronze_source(
@@ -189,7 +211,11 @@ class TestWriteBronzeSource:
         assert "B1" in result_b2.skip_reason
 
     def test_file_grain_idempotency_still_records_audit_lifecycle(
-        self, tmp_path, raw_root_with_widgets, engine, fresh_db,
+        self,
+        tmp_path,
+        raw_root_with_widgets,
+        engine,
+        fresh_db,
     ):
         """When a skip fires, the audit row for THIS batch must still
         reach 'ingested' status — the timeline must be honest about
@@ -213,7 +239,11 @@ class TestWriteBronzeSource:
         assert rows_b2[0].status == FileStatus.INGESTED
 
     def test_changed_file_in_new_batch_writes_normally(
-        self, tmp_path, raw_root_with_widgets, engine, fresh_db,
+        self,
+        tmp_path,
+        raw_root_with_widgets,
+        engine,
+        fresh_db,
     ):
         # First batch ingests
         write_bronze_source(
@@ -241,7 +271,10 @@ class TestWriteBronzeSource:
         assert result_b2.rows_written == 4
 
     def test_never_raises_on_failure(
-        self, tmp_path, engine, fresh_db,
+        self,
+        tmp_path,
+        engine,
+        fresh_db,
     ):
         """The contract: write_bronze_source NEVER raises. A bad source
         is captured in BronzeWriteResult.status='failed', not via
@@ -296,15 +329,20 @@ class TestRunBronzeAgainstSamples:
 
     def test_full_run_creates_partitions_on_disk(self, fresh_db):
         from src.utils.config import get_config
+
         summary = run_bronze(batch_id="B1", raw_root=SAMPLES_DIR)
         assert summary.layer_status == "success"
         bronze_root = get_config().paths.bronze
-        for source_name in ["competitions", "clubs", "players",
-                            "games", "appearances", "player_valuations"]:
+        for source_name in [
+            "competitions",
+            "clubs",
+            "players",
+            "games",
+            "appearances",
+            "player_valuations",
+        ]:
             partition_dir = bronze_root / source_name / f"{BATCH_ID_COLUMN}=B1"
-            assert partition_dir.is_dir(), (
-                f"Missing partition directory: {partition_dir}"
-            )
+            assert partition_dir.is_dir(), f"Missing partition directory: {partition_dir}"
             files = list(partition_dir.glob("*.parquet"))
             assert files, f"No parquet files in {partition_dir}"
 
@@ -338,9 +376,7 @@ class TestRunBronzeFailureModes:
         # players.csv exists; the others don't.
         partial_root = tmp_path / "partial"
         partial_root.mkdir()
-        (partial_root / "players.csv").write_text(
-            (SAMPLES_DIR / "players.csv").read_text()
-        )
+        (partial_root / "players.csv").write_text((SAMPLES_DIR / "players.csv").read_text())
 
         summary = run_bronze(batch_id="B1", raw_root=partial_root)
 
@@ -365,6 +401,7 @@ class TestRunBronzeFailureModes:
         # error is captured in pipeline_runs and in the runner's
         # BronzeRunSummary, not in file_audit.
         from src.metadata import runs
+
         run_row = runs.get_run("B1", "bronze")
         assert run_row is not None
         assert run_row["status"] == "failed"

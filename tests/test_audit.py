@@ -16,7 +16,6 @@ Coverage targets:
 
 from __future__ import annotations
 
-import datetime as dt
 from pathlib import Path
 
 import pytest
@@ -84,15 +83,21 @@ class TestHappyPath:
 
         audit.mark_ingesting(batch_id="B1", source_file_path=path)
         audit.record_ingestion_complete(
-            batch_id="B1", source_file_path=path,
-            source_row_count=1000, bronze_row_count=1000,
+            batch_id="B1",
+            source_file_path=path,
+            source_row_count=1000,
+            bronze_row_count=1000,
         )
         audit.record_quarantine(
-            batch_id="B1", source_name="players", rejected_row_count=5,
+            batch_id="B1",
+            source_name="players",
+            rejected_row_count=5,
         )
         audit.mark_transforming(batch_id="B1", source_name="players")
         audit.record_silver_complete(
-            batch_id="B1", source_name="players", silver_row_count=995,
+            batch_id="B1",
+            source_name="players",
+            silver_row_count=995,
         )
 
         row = audit.get_audit_row(batch_id="B1", source_file_path=path)
@@ -115,15 +120,21 @@ class TestHappyPath:
         )
         audit.mark_ingesting(batch_id="B1", source_file_path=path)
         audit.record_ingestion_complete(
-            batch_id="B1", source_file_path=path,
-            source_row_count=10, bronze_row_count=10,
+            batch_id="B1",
+            source_file_path=path,
+            source_row_count=10,
+            bronze_row_count=10,
         )
         audit.record_quarantine(
-            batch_id="B1", source_name="players", rejected_row_count=0,
+            batch_id="B1",
+            source_name="players",
+            rejected_row_count=0,
         )
         audit.mark_transforming(batch_id="B1", source_name="players")
         audit.record_silver_complete(
-            batch_id="B1", source_name="players", silver_row_count=10,
+            batch_id="B1",
+            source_name="players",
+            silver_row_count=10,
         )
 
         events = audit.get_event_timeline(batch_id="B1", source_file_path=path)
@@ -141,8 +152,10 @@ class TestHappyPath:
         path = _register()
         audit.mark_ingesting(batch_id="B1", source_file_path=path)
         audit.record_ingestion_complete(
-            batch_id="B1", source_file_path=path,
-            source_row_count=42, bronze_row_count=40,
+            batch_id="B1",
+            source_file_path=path,
+            source_row_count=42,
+            bronze_row_count=40,
         )
         events = audit.get_event_timeline(batch_id="B1", source_file_path=path)
         finished = next(e for e in events if e["event_type"] == "ingest_finished")
@@ -166,16 +179,20 @@ class TestStateMachine:
         path = _register()
         with pytest.raises(AuditStateError, match="Illegal transition"):
             audit.record_ingestion_complete(
-                batch_id="B1", source_file_path=path,
-                source_row_count=1, bronze_row_count=1,
+                batch_id="B1",
+                source_file_path=path,
+                source_row_count=1,
+                bronze_row_count=1,
             )
 
     def test_cannot_re_ingest_after_completion(self):
         path = _register()
         audit.mark_ingesting(batch_id="B1", source_file_path=path)
         audit.record_ingestion_complete(
-            batch_id="B1", source_file_path=path,
-            source_row_count=1, bronze_row_count=1,
+            batch_id="B1",
+            source_file_path=path,
+            source_row_count=1,
+            bronze_row_count=1,
         )
         with pytest.raises(AuditStateError):
             audit.mark_ingesting(batch_id="B1", source_file_path=path)
@@ -247,8 +264,10 @@ class TestMarkFailed:
     def test_mark_failed_from_registered(self):
         path = _register()
         audit.mark_failed(
-            batch_id="B1", source_file_path=path,
-            stage="bronze", error_message="exploded",
+            batch_id="B1",
+            source_file_path=path,
+            stage="bronze",
+            error_message="exploded",
         )
         row = audit.get_audit_row(batch_id="B1", source_file_path=path)
         assert row.status == FileStatus.FAILED
@@ -259,8 +278,10 @@ class TestMarkFailed:
         path = _register()
         audit.mark_ingesting(batch_id="B1", source_file_path=path)
         audit.mark_failed(
-            batch_id="B1", source_file_path=path,
-            stage="bronze", error_message="mid-ingest crash",
+            batch_id="B1",
+            source_file_path=path,
+            stage="bronze",
+            error_message="mid-ingest crash",
         )
         row = audit.get_audit_row(batch_id="B1", source_file_path=path)
         assert row.status == FileStatus.FAILED
@@ -269,8 +290,10 @@ class TestMarkFailed:
         path = _register()
         long_error = "x" * 6000
         audit.mark_failed(
-            batch_id="B1", source_file_path=path,
-            stage="bronze", error_message=long_error,
+            batch_id="B1",
+            source_file_path=path,
+            stage="bronze",
+            error_message=long_error,
         )
         row = audit.get_audit_row(batch_id="B1", source_file_path=path)
         assert row.error_message is not None
@@ -280,16 +303,20 @@ class TestMarkFailed:
         # The contract: mark_failed never raises. If the file doesn't
         # exist in the audit, the UPDATE is a no-op and we log internally.
         audit.mark_failed(
-            batch_id="B1", source_file_path="/never/registered.csv",
-            stage="bronze", error_message="orphan",
+            batch_id="B1",
+            source_file_path="/never/registered.csv",
+            stage="bronze",
+            error_message="orphan",
         )
         # No assertion needed — we just verify no exception is raised.
 
     def test_failed_emits_event_with_stage(self):
         path = _register()
         audit.mark_failed(
-            batch_id="B1", source_file_path=path,
-            stage="silver", error_message="boom",
+            batch_id="B1",
+            source_file_path=path,
+            stage="silver",
+            error_message="boom",
         )
         events = audit.get_event_timeline(batch_id="B1", source_file_path=path)
         failed_event = next(e for e in events if e["event_type"] == "failed")
@@ -303,9 +330,7 @@ class TestMarkFailed:
 
 class TestReaders:
     def test_get_audit_row_returns_none_for_unknown(self):
-        assert audit.get_audit_row(
-            batch_id="B1", source_file_path="/nope.csv"
-        ) is None
+        assert audit.get_audit_row(batch_id="B1", source_file_path="/nope.csv") is None
 
     def test_list_batch_files_filters_by_status(self):
         _register(path="/a.csv", md5="1" * 32)
@@ -313,12 +338,8 @@ class TestReaders:
         audit.mark_ingesting(batch_id="B1", source_file_path=path_b)
 
         all_files = audit.list_batch_files(batch_id="B1")
-        registered_only = audit.list_batch_files(
-            batch_id="B1", status=FileStatus.REGISTERED
-        )
-        ingesting_only = audit.list_batch_files(
-            batch_id="B1", status=FileStatus.INGESTING
-        )
+        registered_only = audit.list_batch_files(batch_id="B1", status=FileStatus.REGISTERED)
+        ingesting_only = audit.list_batch_files(batch_id="B1", status=FileStatus.INGESTING)
         assert len(all_files) == 2
         assert len(registered_only) == 1
         assert len(ingesting_only) == 1
@@ -329,8 +350,10 @@ class TestReaders:
         path1 = _register(path="/p.csv", md5="abc")
         audit.mark_ingesting(batch_id="B1", source_file_path=path1)
         audit.record_ingestion_complete(
-            batch_id="B1", source_file_path=path1,
-            source_row_count=10, bronze_row_count=10,
+            batch_id="B1",
+            source_file_path=path1,
+            source_row_count=10,
+            bronze_row_count=10,
         )
 
         # Now the same checksum appears in a future batch's lookup.
@@ -339,16 +362,16 @@ class TestReaders:
         assert prev.batch_id == "B1"
 
     def test_find_previous_successful_returns_none_for_unknown_checksum(self):
-        assert audit.find_previous_successful_ingestion(
-            checksum_md5="never_seen"
-        ) is None
+        assert audit.find_previous_successful_ingestion(checksum_md5="never_seen") is None
 
     def test_find_previous_excludes_failed_ingestions(self):
         # A FAILED prior ingestion must not count as "already done"
         path = _register(md5="abc")
         audit.mark_failed(
-            batch_id="B1", source_file_path=path,
-            stage="bronze", error_message="boom",
+            batch_id="B1",
+            source_file_path=path,
+            stage="bronze",
+            error_message="boom",
         )
         prev = audit.find_previous_successful_ingestion(checksum_md5="abc")
         assert prev is None
@@ -360,16 +383,20 @@ class TestReaders:
         path = _register(schema_hash="schema_v1")
         audit.mark_ingesting(batch_id="B1", source_file_path=path)
         audit.record_ingestion_complete(
-            batch_id="B1", source_file_path=path,
-            source_row_count=1, bronze_row_count=1,
+            batch_id="B1",
+            source_file_path=path,
+            source_row_count=1,
+            bronze_row_count=1,
         )
         assert audit.latest_schema_hash(source_name="players") == "schema_v1"
 
     def test_list_failed_since(self):
         path = _register()
         audit.mark_failed(
-            batch_id="B1", source_file_path=path,
-            stage="bronze", error_message="boom",
+            batch_id="B1",
+            source_file_path=path,
+            stage="bronze",
+            error_message="boom",
         )
         # Use a date guaranteed to be earlier than the test's UTC now
         old = "2000-01-01T00:00:00+00:00"
@@ -387,8 +414,10 @@ class TestSchemaDrift:
     def test_record_schema_drift_emits_event_with_diff(self):
         path = _register()
         audit.record_schema_drift(
-            batch_id="B1", source_file_path=path,
-            previous_schema_hash="aaa", current_schema_hash="bbb",
+            batch_id="B1",
+            source_file_path=path,
+            previous_schema_hash="aaa",
+            current_schema_hash="bbb",
             columns_added=["xg"],
             columns_removed=[],
             dtype_changes={"minutes_played": ("int", "float")},
@@ -396,9 +425,7 @@ class TestSchemaDrift:
         events = audit.get_event_timeline(batch_id="B1", source_file_path=path)
         drift = next(e for e in events if e["event_type"] == "schema_drift_detected")
         assert drift["payload"]["columns_added"] == ["xg"]
-        assert drift["payload"]["dtype_changes"] == {
-            "minutes_played": ["int", "float"]
-        }
+        assert drift["payload"]["dtype_changes"] == {"minutes_played": ["int", "float"]}
 
 
 # ---------------------------------------------------------------------------
@@ -421,15 +448,21 @@ def _full_lifecycle(
     audit.register_file(batch_id="B1", source_name=source, fingerprint=fp)
     audit.mark_ingesting(batch_id="B1", source_file_path=str(fp.path))
     audit.record_ingestion_complete(
-        batch_id="B1", source_file_path=str(fp.path),
-        source_row_count=source_rows, bronze_row_count=bronze_rows,
+        batch_id="B1",
+        source_file_path=str(fp.path),
+        source_row_count=source_rows,
+        bronze_row_count=bronze_rows,
     )
     audit.record_quarantine(
-        batch_id="B1", source_name=source, rejected_row_count=rejected_rows,
+        batch_id="B1",
+        source_name=source,
+        rejected_row_count=rejected_rows,
     )
     audit.mark_transforming(batch_id="B1", source_name=source)
     audit.record_silver_complete(
-        batch_id="B1", source_name=source, silver_row_count=silver_rows,
+        batch_id="B1",
+        source_name=source,
+        silver_row_count=silver_rows,
     )
     return str(fp.path)
 
@@ -437,16 +470,20 @@ def _full_lifecycle(
 class TestReconciliation:
     def test_clean_run_yields_no_findings(self):
         _full_lifecycle(
-            source_rows=100, bronze_rows=100,
-            rejected_rows=0, silver_rows=100,
+            source_rows=100,
+            bronze_rows=100,
+            rejected_rows=0,
+            silver_rows=100,
         )
         findings = audit.reconcile_batch(batch_id="B1")
         assert findings == []
 
     def test_bronze_inflated_is_critical(self):
         _full_lifecycle(
-            source_rows=100, bronze_rows=110,
-            rejected_rows=0, silver_rows=110,
+            source_rows=100,
+            bronze_rows=110,
+            rejected_rows=0,
+            silver_rows=110,
         )
         findings = audit.reconcile_batch(batch_id="B1")
         codes = [f.code for f in findings]
@@ -456,8 +493,10 @@ class TestReconciliation:
 
     def test_row_count_drift_is_critical(self):
         _full_lifecycle(
-            source_rows=100, bronze_rows=100,
-            rejected_rows=5, silver_rows=80,        # expected 95
+            source_rows=100,
+            bronze_rows=100,
+            rejected_rows=5,
+            silver_rows=80,  # expected 95
         )
         findings = audit.reconcile_batch(batch_id="B1")
         codes = [f.code for f in findings]
@@ -467,8 +506,10 @@ class TestReconciliation:
 
     def test_complete_silver_loss_is_critical(self):
         _full_lifecycle(
-            source_rows=100, bronze_rows=100,
-            rejected_rows=100, silver_rows=0,
+            source_rows=100,
+            bronze_rows=100,
+            rejected_rows=100,
+            silver_rows=0,
         )
         findings = audit.reconcile_batch(batch_id="B1")
         codes = [f.code for f in findings]
@@ -478,8 +519,10 @@ class TestReconciliation:
 
     def test_high_reject_rate_is_warn(self):
         _full_lifecycle(
-            source_rows=100, bronze_rows=100,
-            rejected_rows=10, silver_rows=90,
+            source_rows=100,
+            bronze_rows=100,
+            rejected_rows=10,
+            silver_rows=90,
         )
         findings = audit.reconcile_batch(batch_id="B1")
         rates = [f for f in findings if f.code == "high_reject_rate"]
@@ -488,8 +531,10 @@ class TestReconciliation:
 
     def test_empty_source_is_warn(self):
         _full_lifecycle(
-            source_rows=0, bronze_rows=0,
-            rejected_rows=0, silver_rows=0,
+            source_rows=0,
+            bronze_rows=0,
+            rejected_rows=0,
+            silver_rows=0,
         )
         findings = audit.reconcile_batch(batch_id="B1")
         codes = [f.code for f in findings]

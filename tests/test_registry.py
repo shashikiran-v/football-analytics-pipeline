@@ -11,7 +11,6 @@ We cover three things:
 from __future__ import annotations
 
 import pytest
-import yaml
 from pydantic import ValidationError
 
 from src.ingestion.registry import (
@@ -19,7 +18,6 @@ from src.ingestion.registry import (
     SourceRegistry,
     load_registry,
 )
-
 
 # ---------------------------------------------------------------------------
 # Sanity checks on the bundled sources.yaml
@@ -68,10 +66,9 @@ class TestBundledSourcesYaml:
     def test_incremental_sources_have_timestamp_columns(self):
         registry = load_registry()
         for source in registry.incremental_sources():
-            assert source.timestamp_column is not None, (
-                f"{source.name} is in incremental_sources() but has no "
-                f"timestamp_column"
-            )
+            assert (
+                source.timestamp_column is not None
+            ), f"{source.name} is in incremental_sources() but has no timestamp_column"
 
     def test_games_is_incremental_by_date(self):
         games = load_registry().get("games")
@@ -161,7 +158,9 @@ class TestRegistryErrorPaths:
 
     def test_unknown_field_in_source_raises_validation_error(self, tmp_path):
         bad = tmp_path / "sources.yaml"
-        _write_yaml(bad, """
+        _write_yaml(
+            bad,
+            """
 version: 1
 sources:
   - name: t
@@ -172,14 +171,17 @@ sources:
     schema:
       id: int
     not_a_real_field: oops
-""")
+""",
+        )
         with pytest.raises(ValidationError):
             load_registry(bad)
 
     def test_missing_required_field_raises_validation_error(self, tmp_path):
         bad = tmp_path / "sources.yaml"
         # 'description' is required but missing
-        _write_yaml(bad, """
+        _write_yaml(
+            bad,
+            """
 version: 1
 sources:
   - name: t
@@ -188,13 +190,16 @@ sources:
     primary_key: [id]
     schema:
       id: int
-""")
+""",
+        )
         with pytest.raises(ValidationError):
             load_registry(bad)
 
     def test_duplicate_source_names_raise_valueerror(self, tmp_path):
         bad = tmp_path / "sources.yaml"
-        _write_yaml(bad, """
+        _write_yaml(
+            bad,
+            """
 version: 1
 sources:
   - name: t
@@ -209,23 +214,29 @@ sources:
     path_pattern: "{raw_root}/t.csv"
     primary_key: [id]
     schema: { id: int }
-""")
+""",
+        )
         with pytest.raises(ValueError, match="Duplicate source names"):
             load_registry(bad)
 
     def test_empty_sources_list_raises_validation_error(self, tmp_path):
         bad = tmp_path / "sources.yaml"
-        _write_yaml(bad, """
+        _write_yaml(
+            bad,
+            """
 version: 1
 sources: []
-""")
+""",
+        )
         with pytest.raises(ValidationError):
             load_registry(bad)
 
     def test_invalid_format_raises_validation_error(self, tmp_path):
         bad = tmp_path / "sources.yaml"
         # 'avro' isn't in the allowed pattern
-        _write_yaml(bad, """
+        _write_yaml(
+            bad,
+            """
 version: 1
 sources:
   - name: t
@@ -234,13 +245,16 @@ sources:
     path_pattern: "{raw_root}/t.avro"
     primary_key: [id]
     schema: { id: int }
-""")
+""",
+        )
         with pytest.raises(ValidationError):
             load_registry(bad)
 
     def test_scd2_with_empty_tracked_columns_rejected(self, tmp_path):
         bad = tmp_path / "sources.yaml"
-        _write_yaml(bad, """
+        _write_yaml(
+            bad,
+            """
 version: 1
 sources:
   - name: t
@@ -251,7 +265,8 @@ sources:
     schema: { id: int }
     scd2:
       tracked_columns: []
-""")
+""",
+        )
         with pytest.raises(ValidationError):
             load_registry(bad)
 
@@ -278,13 +293,19 @@ class TestDirectConstruction:
 
     def test_construction_rejects_duplicate_names(self):
         sd_a = SourceDefinition(
-            name="dup", description="a", format="csv",
-            path_pattern="{raw_root}/a.csv", primary_key=["id"],
+            name="dup",
+            description="a",
+            format="csv",
+            path_pattern="{raw_root}/a.csv",
+            primary_key=["id"],
             schema={"id": "int"},
         )
         sd_b = SourceDefinition(
-            name="dup", description="b", format="csv",
-            path_pattern="{raw_root}/b.csv", primary_key=["id"],
+            name="dup",
+            description="b",
+            format="csv",
+            path_pattern="{raw_root}/b.csv",
+            primary_key=["id"],
             schema={"id": "int"},
         )
         with pytest.raises(ValueError, match="Duplicate source names"):

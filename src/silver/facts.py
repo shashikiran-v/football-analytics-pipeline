@@ -42,7 +42,6 @@ from src.engines.base import DataFrame, DataFrameEngine
 from src.silver.transforms import derive_match_outcome, derive_season
 from src.utils.logging import get_logger
 
-
 log = get_logger(__name__)
 
 
@@ -207,8 +206,7 @@ def build_fact_appearances(
         rows=total_rows,
         player_sk_unresolved=unresolved,
         player_sk_resolved_pct=(
-            round(100 * (total_rows - unresolved) / total_rows, 1)
-            if total_rows else None
+            round(100 * (total_rows - unresolved) / total_rows, 1) if total_rows else None
         ),
     )
     return df
@@ -261,19 +259,19 @@ def _build_player_version_index(
     have = engine.columns(dim_players)
     missing = [c for c in needed_cols if c not in have]
     if missing:
-        raise ValueError(
-            f"dim_players missing columns required for as-of join: {missing}"
-        )
+        raise ValueError(f"dim_players missing columns required for as-of join: {missing}")
 
     records = engine.to_records(engine.select(dim_players, needed_cols))
     index: dict[Any, list[dict]] = {}
     for rec in records:
         pid = rec["player_id"]
-        index.setdefault(pid, []).append({
-            "effective_date": rec["effective_date"],
-            "end_date": rec["end_date"],
-            "player_sk": rec["player_sk"],
-        })
+        index.setdefault(pid, []).append(
+            {
+                "effective_date": rec["effective_date"],
+                "end_date": rec["end_date"],
+                "player_sk": rec["player_sk"],
+            }
+        )
     # Sort each player's versions newest-effective_date first so the
     # window-containment check returns the right version quickly.
     for pid in index:

@@ -29,7 +29,6 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-
 # 64 KiB. Empirically the throughput plateau on commodity hardware; bigger
 # chunks don't go faster, smaller chunks waste cycles in the Python loop.
 _DEFAULT_CHUNK_BYTES = 64 * 1024

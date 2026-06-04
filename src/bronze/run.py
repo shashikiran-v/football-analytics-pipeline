@@ -42,7 +42,7 @@ from __future__ import annotations
 import argparse
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from src.bronze.writer import BronzeWriteResult, write_bronze_source
@@ -52,7 +52,6 @@ from src.metadata import runs
 from src.metadata.db import init_db
 from src.utils.config import get_config
 from src.utils.logging import bind_batch_context, configure_logging, get_logger
-
 
 log = get_logger(__name__)
 
@@ -67,9 +66,9 @@ class BronzeRunSummary:
     """Aggregate outcome of a Bronze run across all sources."""
 
     batch_id: str
-    layer_status: str                # 'success' | 'failed' | 'skipped'
+    layer_status: str  # 'success' | 'failed' | 'skipped'
     results: list[BronzeWriteResult]
-    skipped_layer: bool = False      # True if layer-grain idempotency fired
+    skipped_layer: bool = False  # True if layer-grain idempotency fired
 
     @property
     def total_rows(self) -> int:
@@ -91,7 +90,7 @@ def _derive_batch_id(granularity: str) -> str:
     UTC now at the configured granularity. Stable across the run so
     every source in the batch shares the same partition key.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if granularity == "hourly":
         return now.strftime("%Y-%m-%dT%H")
     if granularity == "daily":
@@ -119,9 +118,7 @@ def _format_summary(summary: BronzeRunSummary) -> str:
             detail = f"skip_reason={r.skip_reason}"
         else:
             detail = f"error={r.error_message}"
-        lines.append(
-            f"    {r.source_name:<{width}}  {r.status:<8}  {detail}"
-        )
+        lines.append(f"    {r.source_name:<{width}}  {r.status:<8}  {detail}")
     return "\n".join(lines)
 
 
@@ -155,7 +152,7 @@ def run_bronze(
         - Produces Parquet partitions under {paths.bronze}/{source}/
     """
     cfg = get_config()
-    init_db()                                # safe to call repeatedly
+    init_db()  # safe to call repeatedly
 
     # Default the batch_id if not provided
     if batch_id is None:
@@ -180,10 +177,7 @@ def run_bronze(
 
     with bind_batch_context(batch_id=batch_id, layer="bronze"):
         # ===== Layer-grain idempotency check =============================
-        if (
-            cfg.batch.skip_if_already_succeeded
-            and runs.has_succeeded(batch_id, "bronze")
-        ):
+        if cfg.batch.skip_if_already_succeeded and runs.has_succeeded(batch_id, "bronze"):
             log.info("bronze_layer_skipped_already_succeeded")
             return BronzeRunSummary(
                 batch_id=batch_id,
@@ -223,14 +217,13 @@ def run_bronze(
         rows_written_count = sum(1 for r in results if r.status == "written")
 
         if failures:
-            error_summary = "; ".join(
-                f"{r.source_name}: {r.error_message}" for r in failures
-            )
+            error_summary = "; ".join(f"{r.source_name}: {r.error_message}" for r in failures)
             runs.mark_failed(batch_id, "bronze", error=error_summary)
             layer_status = "failed"
         else:
             runs.mark_success(
-                batch_id, "bronze",
+                batch_id,
+                "bronze",
                 rows_in=rows_total,
                 rows_out=rows_total,
             )

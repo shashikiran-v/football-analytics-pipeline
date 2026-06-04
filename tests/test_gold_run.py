@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pandas as pd
 import pytest
 
 from src.bronze.run import run_bronze
@@ -18,7 +17,6 @@ from src.gold.run import GoldRunSummary, run_gold
 from src.metadata.db import init_db
 from src.silver.run import run_silver
 from src.utils.config import get_config
-
 
 SAMPLES_DIR = Path(__file__).resolve().parents[1] / "data" / "sample"
 
@@ -80,12 +78,8 @@ class TestRunGoldHappyPath:
             "club_performance_metrics",
         ]:
             partition_dir = gold_root / artifact / "batch_id=2024-12-01"
-            assert partition_dir.is_dir(), (
-                f"Missing partition directory: {partition_dir}"
-            )
-            assert list(partition_dir.glob("*.parquet")), (
-                f"No parquet files in {partition_dir}"
-            )
+            assert partition_dir.is_dir(), f"Missing partition directory: {partition_dir}"
+            assert list(partition_dir.glob("*.parquet")), f"No parquet files in {partition_dir}"
 
     def test_primary_source_attribution_recorded(self, silver_seeded):
         """Each artifact's outcome must report its primary_source."""
@@ -121,6 +115,7 @@ class TestLayerIdempotency:
 class TestAuditIntegration:
     def test_gold_row_count_recorded_on_primary_sources(self, silver_seeded):
         from src.metadata import audit
+
         run_gold(batch_id="2024-12-01")
         rows = audit.list_batch_files(batch_id="2024-12-01")
         by_source = {r.source_name: r for r in rows}
@@ -138,6 +133,7 @@ class TestAuditIntegration:
         """Sources that are dimensions (joined in but not primary)
         should NOT have a gold_row_count recorded."""
         from src.metadata import audit
+
         run_gold(batch_id="2024-12-01")
         rows = audit.list_batch_files(batch_id="2024-12-01")
         by_source = {r.source_name: r for r in rows}
@@ -153,6 +149,7 @@ class TestAuditIntegration:
         lineage requirement satisfied for Bronze->Gold direct sources."""
         from src.metadata import audit
         from src.metadata.audit import FileStatus
+
         run_gold(batch_id="2024-12-01")
         rows = audit.list_batch_files(batch_id="2024-12-01")
         by_source = {r.source_name: r for r in rows}
@@ -169,6 +166,7 @@ class TestAuditIntegration:
         gold_finished after the run."""
         from src.metadata import audit
         from src.metadata.audit import EventType
+
         run_gold(batch_id="2024-12-01")
         # appearances primary source - check event timeline
         rows = audit.list_batch_files(batch_id="2024-12-01")

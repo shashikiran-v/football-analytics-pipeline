@@ -39,7 +39,6 @@ from src.metadata.db import init_db
 from src.silver.run import run_silver
 from src.utils.config import get_config
 
-
 SAMPLES_DIR = Path(__file__).resolve().parents[1] / "data" / "sample"
 SAMPLES_DAY2_DIR = Path(__file__).resolve().parents[1] / "data" / "sample" / "day2"
 
@@ -93,23 +92,19 @@ class TestSCD2Day2Versions:
         # Reading dim_players/ root reads BOTH partitions = 26 rows. But
         # the day2_complete fixture reads `dim_players` root.
         # Let's check what we actually have:
-        assert len(day2_complete) >= 14   # at minimum, the day-2 state
+        assert len(day2_complete) >= 14  # at minimum, the day-2 state
 
     def test_day2_partition_has_full_merged_state(self, day2_complete):
         """The day-2 partition specifically contains the full merged
         SCD2 state: 14 rows (12 unchanged + 2 closed day-1 versions of
         Saka/Neuer + 2 new day-2 versions of Saka/Neuer)."""
         cfg = get_config()
-        day2_partition = pd.read_parquet(
-            cfg.paths.silver / "dim_players" / "batch_id=day-2"
-        )
+        day2_partition = pd.read_parquet(cfg.paths.silver / "dim_players" / "batch_id=day-2")
         assert len(day2_partition) == 14
 
     def test_saka_has_two_versions(self, day2_complete):
         cfg = get_config()
-        day2_partition = pd.read_parquet(
-            cfg.paths.silver / "dim_players" / "batch_id=day-2"
-        )
+        day2_partition = pd.read_parquet(cfg.paths.silver / "dim_players" / "batch_id=day-2")
         saka_versions = day2_partition[day2_partition["player_id"] == 1001]
         assert len(saka_versions) == 2
 
@@ -117,11 +112,9 @@ class TestSCD2Day2Versions:
         """The Arsenal-era version should have is_current=False with
         end_date matching the day-2 batch timestamp."""
         cfg = get_config()
-        day2_partition = pd.read_parquet(
-            cfg.paths.silver / "dim_players" / "batch_id=day-2"
-        )
+        day2_partition = pd.read_parquet(cfg.paths.silver / "dim_players" / "batch_id=day-2")
         saka = day2_partition[day2_partition["player_id"] == 1001]
-        closed = saka[saka["is_current"] == False]   # noqa: E712
+        closed = saka[saka["is_current"] == False]  # noqa: E712
         assert len(closed) == 1
         # Arsenal-era data
         assert int(closed["current_club_id"].iloc[0]) == 1
@@ -132,11 +125,9 @@ class TestSCD2Day2Versions:
         """The Chelsea-era version should have is_current=True and
         the new club + market value."""
         cfg = get_config()
-        day2_partition = pd.read_parquet(
-            cfg.paths.silver / "dim_players" / "batch_id=day-2"
-        )
+        day2_partition = pd.read_parquet(cfg.paths.silver / "dim_players" / "batch_id=day-2")
         saka = day2_partition[day2_partition["player_id"] == 1001]
-        current = saka[saka["is_current"] == True]   # noqa: E712
+        current = saka[saka["is_current"] == True]  # noqa: E712
         assert len(current) == 1
         assert int(current["current_club_id"].iloc[0]) == 3
         assert float(current["market_value_in_eur"].iloc[0]) == 130_000_000
@@ -148,9 +139,7 @@ class TestSCD2Day2Versions:
         'Goalkeeper' for both. The SCD2 hash includes the RAW column
         so a new version IS produced. Documented in ADR-0008."""
         cfg = get_config()
-        day2_partition = pd.read_parquet(
-            cfg.paths.silver / "dim_players" / "batch_id=day-2"
-        )
+        day2_partition = pd.read_parquet(cfg.paths.silver / "dim_players" / "batch_id=day-2")
         neuer = day2_partition[day2_partition["player_id"] == 1012]
         assert len(neuer) == 2
         # Both should have canonical='Goalkeeper'
@@ -163,16 +152,14 @@ class TestSCD2Day2Versions:
         """The other 10 players have no tracked-column changes;
         no new versions should be produced for them."""
         cfg = get_config()
-        day2_partition = pd.read_parquet(
-            cfg.paths.silver / "dim_players" / "batch_id=day-2"
-        )
-        changed_player_ids = {1001, 1012}      # Saka, Neuer
+        day2_partition = pd.read_parquet(cfg.paths.silver / "dim_players" / "batch_id=day-2")
+        changed_player_ids = {1001, 1012}  # Saka, Neuer
         unchanged = day2_partition[~day2_partition["player_id"].isin(changed_player_ids)]
         # Each unchanged player should appear exactly once
         version_counts = unchanged.groupby("player_id").size()
         assert all(version_counts == 1)
         # All should be current
-        assert all(unchanged["is_current"] == True)   # noqa: E712
+        assert all(unchanged["is_current"] == True)  # noqa: E712
 
 
 # ---------------------------------------------------------------------------
@@ -186,9 +173,7 @@ class TestSCD2Day2Immutability:
         IDENTICAL row content in day-1 and post-day-2. Not just same
         player_id — every column matches."""
         cfg = get_config()
-        day2_partition = pd.read_parquet(
-            cfg.paths.silver / "dim_players" / "batch_id=day-2"
-        )
+        day2_partition = pd.read_parquet(cfg.paths.silver / "dim_players" / "batch_id=day-2")
 
         # Get all unchanged players (everyone except Saka + Neuer)
         unchanged_ids = set(day1_snapshot["player_id"]) - {1001, 1012}
@@ -216,13 +201,10 @@ class TestSCD2Day2Immutability:
         in the day-2 partition (closed out via end_date update, but
         the historical attributes are preserved)."""
         cfg = get_config()
-        day2_partition = pd.read_parquet(
-            cfg.paths.silver / "dim_players" / "batch_id=day-2"
-        )
+        day2_partition = pd.read_parquet(cfg.paths.silver / "dim_players" / "batch_id=day-2")
         day1_saka = day1_snapshot[day1_snapshot["player_id"] == 1001].iloc[0]
         day2_arsenal_saka = day2_partition[
-            (day2_partition["player_id"] == 1001)
-            & (day2_partition["is_current"] == False)   # noqa: E712
+            (day2_partition["player_id"] == 1001) & (day2_partition["is_current"] == False)  # noqa: E712
         ].iloc[0]
 
         # Tracked columns from the day-1 Arsenal era are preserved
@@ -239,21 +221,19 @@ class TestSCD2Day2Immutability:
         """The day-2 new versions get fresh surrogate keys that don't
         collide with any day-1 sk. The Phase 3 max-plus-one allocation."""
         cfg = get_config()
-        day2_partition = pd.read_parquet(
-            cfg.paths.silver / "dim_players" / "batch_id=day-2"
-        )
+        day2_partition = pd.read_parquet(cfg.paths.silver / "dim_players" / "batch_id=day-2")
         day1_sks = set(day1_snapshot["player_sk"])
         # Find new versions in day-2 (where is_current=True AND
         # player_id is in the changed set)
         new_versions = day2_partition[
-            (day2_partition["is_current"] == True)        # noqa: E712
+            (day2_partition["is_current"] == True)  # noqa: E712
             & (day2_partition["player_id"].isin([1001, 1012]))
         ]
         new_sks = set(new_versions["player_sk"])
         # No collision with day-1 surrogate keys
-        assert not (new_sks & day1_sks), (
-            f"New surrogate keys {new_sks} collide with day-1 keys {day1_sks}"
-        )
+        assert not (
+            new_sks & day1_sks
+        ), f"New surrogate keys {new_sks} collide with day-1 keys {day1_sks}"
 
 
 # ---------------------------------------------------------------------------
@@ -291,13 +271,9 @@ class TestSCD2Day2FactResolution:
         orphan (which DQ quarantines)."""
         cfg = get_config()
         # Read day-2 fact_appearances partition specifically
-        fact = pd.read_parquet(
-            cfg.paths.silver / "fact_appearances" / "batch_id=day-2"
-        )
+        fact = pd.read_parquet(cfg.paths.silver / "fact_appearances" / "batch_id=day-2")
         # Orphan is quarantined; remaining rows have resolved player_sk
-        assert fact["player_sk"].notna().all(), (
-            "Some non-orphan appearances failed to resolve"
-        )
+        assert fact["player_sk"].notna().all(), "Some non-orphan appearances failed to resolve"
         # Pinned count: 30 historical + 5 new - 1 orphan = 34
         # (the orphan with player_id=9999 is in the day-2 quarantine;
         # the day-2 sample appearances.csv contains ALL day-1 rows
@@ -314,18 +290,13 @@ class TestSCD2Day2FactResolution:
         event-time SCD2 would split by the transfer date, but we don't
         have that field."""
         cfg = get_config()
-        fact = pd.read_parquet(
-            cfg.paths.silver / "fact_appearances" / "batch_id=day-2"
-        )
-        day2_partition = pd.read_parquet(
-            cfg.paths.silver / "dim_players" / "batch_id=day-2"
-        )
+        fact = pd.read_parquet(cfg.paths.silver / "fact_appearances" / "batch_id=day-2")
+        day2_partition = pd.read_parquet(cfg.paths.silver / "dim_players" / "batch_id=day-2")
 
         # Saka's Arsenal-era player_sk (is_current=False in day-2 partition)
         saka_arsenal_sk = int(
             day2_partition[
-                (day2_partition["player_id"] == 1001)
-                & (day2_partition["is_current"] == False)   # noqa: E712
+                (day2_partition["player_id"] == 1001) & (day2_partition["is_current"] == False)  # noqa: E712
             ]["player_sk"].iloc[0]
         )
 
@@ -342,12 +313,8 @@ class TestSCD2Day2FactResolution:
         player_sk's [effective_date, end_date] window must contain
         the match date. This is the as-of-event invariant."""
         cfg = get_config()
-        fact = pd.read_parquet(
-            cfg.paths.silver / "fact_appearances" / "batch_id=day-2"
-        )
-        day2_partition = pd.read_parquet(
-            cfg.paths.silver / "dim_players" / "batch_id=day-2"
-        )
+        fact = pd.read_parquet(cfg.paths.silver / "fact_appearances" / "batch_id=day-2")
+        day2_partition = pd.read_parquet(cfg.paths.silver / "dim_players" / "batch_id=day-2")
 
         # Build a quick lookup: player_sk -> (effective_date, end_date)
         sk_windows = {
@@ -357,7 +324,7 @@ class TestSCD2Day2FactResolution:
 
         for _, app in fact.iterrows():
             sk = int(app["player_sk"])
-            match_date = str(app["date"])[:10]   # 'YYYY-MM-DD' prefix
+            match_date = str(app["date"])[:10]  # 'YYYY-MM-DD' prefix
             eff, end = sk_windows[sk]
             assert eff <= match_date <= end, (
                 f"appearance {app['appearance_id']} dated {match_date} "
@@ -369,9 +336,7 @@ class TestSCD2Day2FactResolution:
         appearances as well. It should be quarantined on day-2, not
         appear in Silver."""
         cfg = get_config()
-        fact = pd.read_parquet(
-            cfg.paths.silver / "fact_appearances" / "batch_id=day-2"
-        )
+        fact = pd.read_parquet(cfg.paths.silver / "fact_appearances" / "batch_id=day-2")
         assert 9999 not in set(fact["player_id"])
         # And it's in the day-2 _rejected partition
         rejected_path = cfg.paths.rejected / "appearances" / "batch_id=day-2"

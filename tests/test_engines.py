@@ -16,7 +16,6 @@ import pytest
 from src.engines.base import DataFrameEngine
 from src.utils.hashing import hash_row
 
-
 # ---------------------------------------------------------------------------
 # Helpers: build small dataframes via the engine's own I/O so each test is
 # engine-native without leaking pandas-specific construction.
@@ -141,9 +140,7 @@ class TestColumnDerivation:
         recs = engine.to_records(out)
         for r in recs:
             expected = hash_row([r["player_id"], r["goals"]])
-            assert r["row_hash"] == expected, (
-                f"hash mismatch on {engine.kind} for row {r}"
-            )
+            assert r["row_hash"] == expected, f"hash mismatch on {engine.kind} for row {r}"
 
     def test_with_row_hash_handles_nulls(self, engine, tmp_path):
         csv = tmp_path / "nullable.csv"
@@ -161,12 +158,10 @@ class TestJoinsAndSets:
     def test_inner_join(self, engine, tmp_path):
         df = _make_appearances(engine, tmp_path)
         players_csv = tmp_path / "p.csv"
-        pd.DataFrame(
-            {"player_id": [10, 20, 30], "name": ["Alice", "Bob", "Carol"]}
-        ).to_csv(players_csv, index=False)
-        players = engine.read_csv(
-            players_csv, schema={"player_id": "int", "name": "string"}
+        pd.DataFrame({"player_id": [10, 20, 30], "name": ["Alice", "Bob", "Carol"]}).to_csv(
+            players_csv, index=False
         )
+        players = engine.read_csv(players_csv, schema={"player_id": "int", "name": "string"})
         joined = engine.join(df, players, on=["player_id"], how="inner")
         assert engine.count(joined) == 4
         assert "name" in engine.columns(joined)
@@ -174,12 +169,8 @@ class TestJoinsAndSets:
     def test_left_join_keeps_unmatched(self, engine, tmp_path):
         df = _make_appearances(engine, tmp_path)
         players_csv = tmp_path / "p.csv"
-        pd.DataFrame({"player_id": [10], "name": ["Alice"]}).to_csv(
-            players_csv, index=False
-        )
-        players = engine.read_csv(
-            players_csv, schema={"player_id": "int", "name": "string"}
-        )
+        pd.DataFrame({"player_id": [10], "name": ["Alice"]}).to_csv(players_csv, index=False)
+        players = engine.read_csv(players_csv, schema={"player_id": "int", "name": "string"})
         joined = engine.join(df, players, on=["player_id"], how="left")
         assert engine.count(joined) == 4
 

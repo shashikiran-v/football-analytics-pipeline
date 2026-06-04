@@ -26,7 +26,6 @@ from src.engines.factory import get_engine
 from src.engines.pandas_engine import PandasEngine
 from src.engines.spark_engine import SparkEngine
 
-
 # ---------------------------------------------------------------------------
 # Factory wiring
 # ---------------------------------------------------------------------------
@@ -115,6 +114,7 @@ class TestStubBehaviour:
         test asserts that claim is real by checking sys.modules after
         a fresh SparkEngine instantiation."""
         import sys
+
         # Trigger fresh import path
         SparkEngine()
         assert "pyspark" not in sys.modules, (

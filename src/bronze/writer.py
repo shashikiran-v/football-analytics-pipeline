@@ -57,7 +57,6 @@ from src.ingestion.registry import SourceDefinition
 from src.metadata import audit
 from src.utils.logging import bind_batch_context, get_logger
 
-
 log = get_logger(__name__)
 
 
@@ -91,9 +90,9 @@ class BronzeWriteResult:
     """
 
     source_name: str
-    status: str                      # 'written' | 'skipped' | 'failed'
-    rows_written: int                 # 0 on skipped/failed
-    output_path: Path | None          # None on skipped/failed
+    status: str  # 'written' | 'skipped' | 'failed'
+    rows_written: int  # 0 on skipped/failed
+    output_path: Path | None  # None on skipped/failed
     skip_reason: str | None = None
     error_message: str | None = None
 
@@ -132,12 +131,16 @@ def write_bronze_source(
     # Bind logging context for this source's whole lifecycle. Every log
     # line emitted below carries batch_id, layer=bronze, and source_name.
     with bind_batch_context(
-        batch_id=batch_id, layer="bronze", source_name=source.name,
+        batch_id=batch_id,
+        layer="bronze",
+        source_name=source.name,
     ):
         # === Phase 1: load + fingerprint ================================
         try:
             load_result = load_source(
-                source=source, raw_root=raw_root, engine=engine,
+                source=source,
+                raw_root=raw_root,
+                engine=engine,
             )
         except FileLoaderError as e:
             # File doesn't exist or format unsupported — can't even
@@ -194,7 +197,8 @@ def write_bronze_source(
             # lifecycle so the timeline reflects what happened.
             try:
                 audit.mark_ingesting(
-                    batch_id=batch_id, source_file_path=path_str,
+                    batch_id=batch_id,
+                    source_file_path=path_str,
                 )
                 audit.record_ingestion_complete(
                     batch_id=batch_id,
@@ -205,8 +209,10 @@ def write_bronze_source(
             except Exception as e:
                 # Audit transition failed; promote to failed status.
                 audit.mark_failed(
-                    batch_id=batch_id, source_file_path=path_str,
-                    stage="bronze", error_message=str(e),
+                    batch_id=batch_id,
+                    source_file_path=path_str,
+                    stage="bronze",
+                    error_message=str(e),
                 )
                 return BronzeWriteResult(
                     source_name=source.name,
@@ -220,16 +226,14 @@ def write_bronze_source(
                 status="skipped",
                 rows_written=0,
                 output_path=None,
-                skip_reason=(
-                    f"identical checksum already ingested in batch "
-                    f"{prior.batch_id}"
-                ),
+                skip_reason=(f"identical checksum already ingested in batch {prior.batch_id}"),
             )
 
         # === Phase 4: ingest -> write -> finalise ======================
         try:
             audit.mark_ingesting(
-                batch_id=batch_id, source_file_path=path_str,
+                batch_id=batch_id,
+                source_file_path=path_str,
             )
 
             # Add the partition key column. The engine handles this

@@ -31,7 +31,6 @@ from src.bronze.resolver import resolve_bronze_partition
 from src.bronze.run import run_bronze
 from src.metadata.db import init_db
 
-
 SAMPLES_DIR = Path(__file__).resolve().parents[1] / "data" / "sample"
 SAMPLES_DAY2_DIR = Path(__file__).resolve().parents[1] / "data" / "sample" / "day2"
 
@@ -63,6 +62,7 @@ def day1_and_day2_seeded(day1_seeded):
 class TestPartitionExistsOnDisk:
     def test_returns_current_partition_directly(self, day1_seeded):
         from src.utils.config import get_config
+
         cfg = get_config()
         # Day-1 wrote a clubs partition under batch_id=day-1
         path = resolve_bronze_partition(
@@ -86,6 +86,7 @@ class TestCrossBatchResolution:
         idempotency skips re-writing under day-2/. The resolver must
         find day-1's partition by following the checksum."""
         from src.utils.config import get_config
+
         cfg = get_config()
         path = resolve_bronze_partition(
             bronze_root=cfg.paths.bronze,
@@ -103,6 +104,7 @@ class TestCrossBatchResolution:
         """players.csv has the deliberate Saka+Neuer changes → day-2/
         partition was written. Resolver returns day-2 directly."""
         from src.utils.config import get_config
+
         cfg = get_config()
         path = resolve_bronze_partition(
             bronze_root=cfg.paths.bronze,
@@ -117,6 +119,7 @@ class TestCrossBatchResolution:
         """Read the resolved partition and verify it contains the day-1
         clubs data (5 clubs)."""
         from src.utils.config import get_config
+
         cfg = get_config()
         path = resolve_bronze_partition(
             bronze_root=cfg.paths.bronze,
@@ -137,6 +140,7 @@ class TestCrossBatchResolution:
 class TestNoIngestionFound:
     def test_unknown_source_returns_none(self, day1_seeded):
         from src.utils.config import get_config
+
         cfg = get_config()
         path = resolve_bronze_partition(
             bronze_root=cfg.paths.bronze,
@@ -152,6 +156,7 @@ class TestNoIngestionFound:
         asking for a future batch will still find day-1 (because day-1
         ≤ asked_batch)."""
         from src.utils.config import get_config
+
         cfg = get_config()
         # day-99 doesn't exist but day-1 is ≤ day-99
         # (string comparison; works for our naming convention)
@@ -191,8 +196,9 @@ class TestChainOfFileGrainSkips:
         day-2 had its own players.csv (different checksum) so wrote
         separately. A third batch using the day-1 players.csv would
         skip both — chain depth of 2. Resolver must still find data."""
-        from src.utils.config import get_config
         from src.bronze.run import run_bronze
+        from src.utils.config import get_config
+
         cfg = get_config()
 
         # Run a third batch against the day-1 samples (unchanged from day-1)
@@ -208,9 +214,9 @@ class TestChainOfFileGrainSkips:
                 batch_id="2026-06-02",
             )
             assert path is not None, f"Resolver returned None for {src}"
-            assert path == cfg.paths.bronze / src / "batch_id=day-1", (
-                f"Resolver returned wrong path for {src}: {path}"
-            )
+            assert (
+                path == cfg.paths.bronze / src / "batch_id=day-1"
+            ), f"Resolver returned wrong path for {src}: {path}"
 
     def test_audit_lookup_handles_mixed_batch_id_formats(self, day1_and_day2_seeded):
         """The audit DAO's find_most_recent_ingestion_for_source must
@@ -229,7 +235,8 @@ class TestChainOfFileGrainSkips:
         # should find one of the earlier batches as 'most recent
         # at-or-before' — regardless of lexicographic ordering.
         result = audit.find_most_recent_ingestion_for_source(
-            source_name="clubs", as_of_batch_id="2026-06-02",
+            source_name="clubs",
+            as_of_batch_id="2026-06-02",
         )
         assert result is not None
         # Should find one of the prior batches; the exact batch depends
@@ -244,10 +251,11 @@ class TestChainOfFileGrainSkips:
         This is the exact failure mode that the Airflow DAG hit."""
         from src.bronze.run import run_bronze
         from src.silver.run import run_silver
+
         run_bronze(batch_id="2026-06-02", raw_root=SAMPLES_DIR)
         silver_summary = run_silver(batch_id="2026-06-02")
-        assert silver_summary.layer_status == "success", (
-            f"Silver failed: {[r.error_message for r in silver_summary.results if r.status == 'failed']}"
-        )
+        assert (
+            silver_summary.layer_status == "success"
+        ), f"Silver failed: {[r.error_message for r in silver_summary.results if r.status == 'failed']}"
         # All 6 artifacts written
         assert sum(1 for r in silver_summary.results if r.status == "written") == 6

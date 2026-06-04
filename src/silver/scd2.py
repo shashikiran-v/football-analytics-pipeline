@@ -59,7 +59,6 @@ from typing import Any
 from src.engines.base import DataFrame, DataFrameEngine
 from src.utils.logging import get_logger
 
-
 log = get_logger(__name__)
 
 
@@ -171,18 +170,24 @@ def scd2_merge(
     # by anti-joining existing against existing_current on the surrogate
     # key — that way 'historical' is whatever didn't end up in 'current'.
     historical = engine.join(
-        existing_dim, engine.select(existing_current, [surrogate_key_column]),
-        on=[surrogate_key_column], how="anti",
+        existing_dim,
+        engine.select(existing_current, [surrogate_key_column]),
+        on=[surrogate_key_column],
+        how="anti",
     )
 
     historical_count = engine.count(historical)
 
     # --- Hash both sides on tracked_columns ------------------------------
     incoming_hashed = engine.with_row_hash(
-        incoming, tracked_columns, hash_column=_ROW_HASH_COLUMN,
+        incoming,
+        tracked_columns,
+        hash_column=_ROW_HASH_COLUMN,
     )
     existing_current_hashed = engine.with_row_hash(
-        existing_current, tracked_columns, hash_column=_ROW_HASH_COLUMN,
+        existing_current,
+        tracked_columns,
+        hash_column=_ROW_HASH_COLUMN,
     )
 
     # --- Find NEW rows: in incoming, not in existing_current ------------
@@ -190,7 +195,8 @@ def scd2_merge(
     new_rows = engine.join(
         incoming_hashed,
         engine.select(existing_current_hashed, natural_key),
-        on=natural_key, how="anti",
+        on=natural_key,
+        how="anti",
     )
 
     # --- For the natural keys that DO overlap, compare hashes ----------
@@ -205,8 +211,10 @@ def scd2_merge(
         {_ROW_HASH_COLUMN: "_scd2_existing_hash"},
     )
     overlap = engine.join(
-        incoming_hashed, existing_for_compare,
-        on=natural_key, how="inner",
+        incoming_hashed,
+        existing_for_compare,
+        on=natural_key,
+        how="inner",
     )
 
     # CHANGED: natural key matches but hash differs.
@@ -256,8 +264,10 @@ def scd2_merge(
     if unchanged_count > 0:
         unchanged_sks = engine.select(unchanged_rows, [surrogate_key_column])
         unchanged_passthrough = engine.join(
-            existing_current, unchanged_sks,
-            on=[surrogate_key_column], how="semi",
+            existing_current,
+            unchanged_sks,
+            on=[surrogate_key_column],
+            how="semi",
         )
         output_parts.append(unchanged_passthrough)
 
@@ -265,15 +275,21 @@ def scd2_merge(
     if changed_count > 0:
         changed_existing_sks = engine.select(changed_rows, [surrogate_key_column])
         closed_out = engine.join(
-            existing_current, changed_existing_sks,
-            on=[surrogate_key_column], how="semi",
+            existing_current,
+            changed_existing_sks,
+            on=[surrogate_key_column],
+            how="semi",
         )
         # Overwrite end_date and is_current.
         closed_out = engine.with_constant_column(
-            closed_out, END_DATE_COLUMN, batch_timestamp,
+            closed_out,
+            END_DATE_COLUMN,
+            batch_timestamp,
         )
         closed_out = engine.with_constant_column(
-            closed_out, IS_CURRENT_COLUMN, False,
+            closed_out,
+            IS_CURRENT_COLUMN,
+            False,
         )
         output_parts.append(closed_out)
 
@@ -349,14 +365,10 @@ def _validate_inputs(
     incoming_cols = set(engine.columns(incoming))
     missing_nk = [c for c in natural_key if c not in incoming_cols]
     if missing_nk:
-        raise ValueError(
-            f"incoming missing natural_key column(s): {missing_nk}"
-        )
+        raise ValueError(f"incoming missing natural_key column(s): {missing_nk}")
     missing_tc = [c for c in tracked_columns if c not in incoming_cols]
     if missing_tc:
-        raise ValueError(
-            f"incoming missing tracked_column(s): {missing_tc}"
-        )
+        raise ValueError(f"incoming missing tracked_column(s): {missing_tc}")
 
 
 def _next_surrogate_key(
@@ -378,7 +390,8 @@ def _next_surrogate_key(
     # Add a constant column to group on, then compute max.
     grouped = engine.with_constant_column(
         engine.select(existing_dim, [surrogate_key_column]),
-        "_scd2_group", value="all",
+        "_scd2_group",
+        value="all",
     )
     aggregated = engine.group_by_agg(
         grouped,
@@ -410,16 +423,24 @@ def _initial_load(
         # with the SCD2 columns attached so downstream readers don't
         # encounter a schemaless dim.
         seeded = engine.with_constant_column(
-            incoming, surrogate_key_column, 0,
+            incoming,
+            surrogate_key_column,
+            0,
         )
         seeded = engine.with_constant_column(
-            seeded, EFFECTIVE_DATE_COLUMN, batch_timestamp,
+            seeded,
+            EFFECTIVE_DATE_COLUMN,
+            batch_timestamp,
         )
         seeded = engine.with_constant_column(
-            seeded, END_DATE_COLUMN, FAR_FUTURE_DATE,
+            seeded,
+            END_DATE_COLUMN,
+            FAR_FUTURE_DATE,
         )
         seeded = engine.with_constant_column(
-            seeded, IS_CURRENT_COLUMN, True,
+            seeded,
+            IS_CURRENT_COLUMN,
+            True,
         )
         # Filter to empty (we just want the schema, not the placeholder row)
         empty = engine.filter_eq(seeded, IS_CURRENT_COLUMN, "no-such-value")
@@ -511,6 +532,7 @@ def _records_to_df(records: list[dict[str, Any]], engine: DataFrameEngine) -> Da
     """
     if engine.kind == "pandas":
         import pandas as pd
+
         return pd.DataFrame(records)
     if engine.kind == "spark":
         # Placeholder — to be implemented when SparkEngine arrives.

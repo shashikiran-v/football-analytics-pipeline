@@ -1,0 +1,153 @@
+name: CI
+
+# Triggers: every push and every pull request against any branch.
+# Matrix: Python 3.11 (the version our requirements.txt was developed
+# against and what most contributors run locally). Adding 3.12 later
+# would be one matrix entry.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: ['**']
+
+# Cancel in-flight runs when a new commit lands on the same branch.
+# Saves CI minutes and surfaces the latest state faster.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # =====================================================================
+  # Test job — runs the full pytest suite including Airflow tests.
+  # =====================================================================
+  #
+  # We install BOTH requirements.txt AND requirements-airflow.txt so
+  # the 21 Airflow-dependent tests run rather than auto-skipping. The
+  # CI badge is more credible when it represents the real test count.
+  #
+  # Airflow's metadata DB needs `airflow db migrate` to run before the
+  # DagBag fixture can parse our DAG. The test fixture handles this
+  # automatically (see tests/test_airflow_dag.py).
+  # =====================================================================
+  test:
+    name: Test suite (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.11']
+      # Don't abort other matrix entries if one fails. Each Python
+      # version is independently informative.
+      fail-fast: false
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          # Cache pip downloads keyed on requirements file contents.
+          # Saves ~60s per run on subsequent CI runs.
+          cache: 'pip'
+          cache-dependency-path: |
+            requirements.txt
+            requirements-airflow.txt
+
+      - name: Install core dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Airflow with constraints
+        # Apache publishes a constraints file per Airflow release that
+        # pins all transitive dependencies (Flask, Werkzeug, SQLAlchemy,
+        # etc) to known-compatible versions. Without it, installs almost
+        # always hit transitive conflicts.
+        run: |
+          pip install -r requirements-airflow.txt \
+            --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.10.3/constraints-${{ matrix.python-version }}.txt"
+
+      - name: Install test dependencies
+        run: pip install pytest pytest-cov
+
+      - name: Run test suite
+        # Run all tests. The 21 Airflow tests will execute now that
+        # apache-airflow is installed; the dagbag fixture initialises
+        # Airflow's metadata DB automatically.
+        run: |
+          pytest tests/ -v --tb=short
+
+  # =====================================================================
+  # Lint job — fast, structural checks. Runs in parallel with tests.
+  # =====================================================================
+  #
+  # Kept separate from the test job so a lint failure doesn't mask test
+  # status, and so contributors see both signals at once.
+  # =====================================================================
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install ruff
+        # Pinned to match the version contributors run locally. Bumping
+        # ruff is a coordinated change: bump here, bump dev deps, then
+        # reformat the codebase against the new ruff and resolve any
+        # new lint rules. Don't bump silently.
+        run: pip install ruff==0.4.10
+
+      - name: Run ruff
+        # ruff check is the linter; ruff format --check verifies code
+        # is consistently formatted without actually rewriting files.
+        # Both are non-zero exit on failure, which fails the CI job.
+        run: |
+          ruff check src/ tests/ dags/
+          ruff format --check src/ tests/ dags/
+
+  # =====================================================================
+  # Docker build job — verifies the Dockerfile still builds cleanly.
+  # =====================================================================
+  #
+  # This is the cheapest possible smoke test of Phase 9's deliverable.
+  # We don't run the container or trigger a DAG; we just verify the
+  # image builds. That catches regressions like the pip --user bug
+  # from Slice 9.1 before they reach a reviewer.
+  # =====================================================================
+  docker:
+    name: Docker image build
+    runs-on: ubuntu-latest
+    # Only run docker job if test + lint pass — saves CI minutes when
+    # there's an obvious code-level problem to fix first.
+    needs: [test, lint]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        # Buildx is the modern Docker build engine; supports better
+        # layer caching and multi-arch builds. GitHub-hosted runners
+        # ship with it pre-installed via this action.
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        # We build but don't push — the image just needs to compile
+        # successfully. Layer cache is keyed on the workflow run.
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          tags: football-analytics-pipeline:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

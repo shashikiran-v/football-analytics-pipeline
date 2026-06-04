@@ -9,17 +9,16 @@ queried across batches to track quality trends over time.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from src.metadata.db import connect
-
 
 Severity = Literal["ERROR", "WARN"]
 
 
 def _utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def record_result(

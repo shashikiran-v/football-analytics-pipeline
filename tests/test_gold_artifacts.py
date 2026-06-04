@@ -35,7 +35,6 @@ from src.metadata.db import init_db
 from src.silver.run import run_silver
 from src.utils.config import get_config
 
-
 SAMPLES_DIR = Path(__file__).resolve().parents[1] / "data" / "sample"
 
 
@@ -82,7 +81,8 @@ class TestTopScorersBySeason:
     def test_one_row_per_player_per_season(self, silver_seeded):
         cfg = get_config()
         with gold_session(
-            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+            silver_root=cfg.paths.silver,
+            bronze_root=cfg.paths.bronze,
         ) as conn:
             df = conn.execute(top_scorers_by_season.sql).fetchdf()
         # Samples have 12 players, all in 2024-25, all with appearances
@@ -94,7 +94,8 @@ class TestTopScorersBySeason:
         """Pinned aggregate — Bellingham and Lewandowski tied with 4 goals."""
         cfg = get_config()
         with gold_session(
-            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+            silver_root=cfg.paths.silver,
+            bronze_root=cfg.paths.bronze,
         ) as conn:
             df = conn.execute(top_scorers_by_season.sql).fetchdf()
         top_goals = int(df["total_goals"].max())
@@ -108,7 +109,8 @@ class TestTopScorersBySeason:
         verifies the dimensional join is wired correctly."""
         cfg = get_config()
         with gold_session(
-            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+            silver_root=cfg.paths.silver,
+            bronze_root=cfg.paths.bronze,
         ) as conn:
             df = conn.execute(top_scorers_by_season.sql).fetchdf()
         # Goalkeeper should appear (sample has Raya, Sanchez, Neuer)
@@ -119,7 +121,8 @@ class TestTopScorersBySeason:
         It must not appear in Gold."""
         cfg = get_config()
         with gold_session(
-            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+            silver_root=cfg.paths.silver,
+            bronze_root=cfg.paths.bronze,
         ) as conn:
             df = conn.execute(top_scorers_by_season.sql).fetchdf()
         assert 9999 not in set(df["player_id"])
@@ -134,7 +137,8 @@ class TestClubSeasonSummary:
     def test_one_row_per_club_per_season(self, silver_seeded):
         cfg = get_config()
         with gold_session(
-            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+            silver_root=cfg.paths.silver,
+            bronze_root=cfg.paths.bronze,
         ) as conn:
             df = conn.execute(club_season_summary.sql).fetchdf()
         # 5 clubs in samples, all in 2024-25
@@ -146,7 +150,8 @@ class TestClubSeasonSummary:
         With 6 sample matches across 5 clubs, sum should be 12."""
         cfg = get_config()
         with gold_session(
-            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+            silver_root=cfg.paths.silver,
+            bronze_root=cfg.paths.bronze,
         ) as conn:
             df = conn.execute(club_season_summary.sql).fetchdf()
         assert int(df["matches_played"].sum()) == 12
@@ -155,7 +160,8 @@ class TestClubSeasonSummary:
         """Real Madrid: 1 win + 2 draws = 3 + 2 = 5 points."""
         cfg = get_config()
         with gold_session(
-            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+            silver_root=cfg.paths.silver,
+            bronze_root=cfg.paths.bronze,
         ) as conn:
             df = conn.execute(club_season_summary.sql).fetchdf()
         rma = df[df["club_name"] == "Real Madrid"].iloc[0]
@@ -169,26 +175,25 @@ class TestClubSeasonSummary:
         are possible; we CAST AS INTEGER in the SQL to keep them clean."""
         cfg = get_config()
         with gold_session(
-            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+            silver_root=cfg.paths.silver,
+            bronze_root=cfg.paths.bronze,
         ) as conn:
             df = conn.execute(club_season_summary.sql).fetchdf()
         # In pandas, integer dtypes have 'int' in their kind
         for col in ["wins", "draws", "losses", "points"]:
-            assert df[col].dtype.kind == "i", (
-                f"{col} dtype is {df[col].dtype} — expected integer"
-            )
+            assert df[col].dtype.kind == "i", f"{col} dtype is {df[col].dtype} — expected integer"
 
     def test_goal_difference_math(self, silver_seeded):
         """goals_for - goals_against = goal_difference, always."""
         cfg = get_config()
         with gold_session(
-            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+            silver_root=cfg.paths.silver,
+            bronze_root=cfg.paths.bronze,
         ) as conn:
             df = conn.execute(club_season_summary.sql).fetchdf()
         for _, row in df.iterrows():
             assert (
-                row["goal_difference"]
-                == row["goals_for"] - row["goals_against"]
+                row["goal_difference"] == row["goals_for"] - row["goals_against"]
             ), f"Bad math for {row['club_name']}"
 
 
@@ -201,7 +206,8 @@ class TestGoldBuilder:
     def test_build_writes_partitioned_parquet(self, silver_seeded):
         cfg = get_config()
         with gold_session(
-            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+            silver_root=cfg.paths.silver,
+            bronze_root=cfg.paths.bronze,
         ) as conn:
             result = build_gold_artifact(
                 artifact=top_scorers_by_season,
@@ -210,9 +216,7 @@ class TestGoldBuilder:
                 batch_id="2024-12-01",
             )
         assert result.row_count == 12
-        partition_dir = (
-            cfg.paths.gold / "top_scorers_by_season" / "batch_id=2024-12-01"
-        )
+        partition_dir = cfg.paths.gold / "top_scorers_by_season" / "batch_id=2024-12-01"
         assert partition_dir.is_dir()
         files = list(partition_dir.glob("*.parquet"))
         assert files
@@ -220,11 +224,14 @@ class TestGoldBuilder:
     def test_materialised_parquet_readable_via_pandas(self, silver_seeded):
         cfg = get_config()
         with gold_session(
-            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+            silver_root=cfg.paths.silver,
+            bronze_root=cfg.paths.bronze,
         ) as conn:
             build_gold_artifact(
-                artifact=club_season_summary, conn=conn,
-                gold_root=cfg.paths.gold, batch_id="2024-12-01",
+                artifact=club_season_summary,
+                conn=conn,
+                gold_root=cfg.paths.gold,
+                batch_id="2024-12-01",
             )
         df = pd.read_parquet(cfg.paths.gold / "club_season_summary")
         assert len(df) == 5
@@ -233,11 +240,14 @@ class TestGoldBuilder:
     def test_result_reports_correct_sources(self, silver_seeded):
         cfg = get_config()
         with gold_session(
-            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+            silver_root=cfg.paths.silver,
+            bronze_root=cfg.paths.bronze,
         ) as conn:
             result = build_gold_artifact(
-                artifact=top_scorers_by_season, conn=conn,
-                gold_root=cfg.paths.gold, batch_id="2024-12-01",
+                artifact=top_scorers_by_season,
+                conn=conn,
+                gold_root=cfg.paths.gold,
+                batch_id="2024-12-01",
             )
         # The result should expose the source views the artifact reads
         assert "fact_appearances" in result.sources
@@ -253,7 +263,8 @@ class TestTopPlayersAllTime:
     def test_one_row_per_player(self, silver_seeded):
         cfg = get_config()
         with gold_session(
-            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+            silver_root=cfg.paths.silver,
+            bronze_root=cfg.paths.bronze,
         ) as conn:
             df = conn.execute(top_players_all_time.sql).fetchdf()
         # 12 players in samples, all appear in fact_appearances
@@ -265,7 +276,8 @@ class TestTopPlayersAllTime:
         Pinned values: Bellingham 4 goals in 3 apps; Lewandowski 4 in 2."""
         cfg = get_config()
         with gold_session(
-            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+            silver_root=cfg.paths.silver,
+            bronze_root=cfg.paths.bronze,
         ) as conn:
             df = conn.execute(top_players_all_time.sql).fetchdf()
         bellingham = df[df["player_name"] == "Jude Bellingham"].iloc[0]
@@ -279,7 +291,8 @@ class TestTopPlayersAllTime:
         """goals_per_appearance = total_goals / appearance_count, always."""
         cfg = get_config()
         with gold_session(
-            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+            silver_root=cfg.paths.silver,
+            bronze_root=cfg.paths.bronze,
         ) as conn:
             df = conn.execute(top_players_all_time.sql).fetchdf()
         for _, row in df.iterrows():
@@ -292,7 +305,8 @@ class TestTopPlayersAllTime:
         the JOIN clause means a future multi-version dim won't double-count."""
         cfg = get_config()
         with gold_session(
-            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+            silver_root=cfg.paths.silver,
+            bronze_root=cfg.paths.bronze,
         ) as conn:
             df = conn.execute(top_players_all_time.sql).fetchdf()
         # Still 12 rows (one per player_id); JOIN didn't duplicate
@@ -310,7 +324,8 @@ class TestPlayerValuationRollingAvg:
         player_valuations after filtering nulls."""
         cfg = get_config()
         with gold_session(
-            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+            silver_root=cfg.paths.silver,
+            bronze_root=cfg.paths.bronze,
         ) as conn:
             df = conn.execute(player_valuation_rolling_avg.sql).fetchdf()
         # Samples have 18 valuations across multiple players
@@ -320,7 +335,8 @@ class TestPlayerValuationRollingAvg:
         """The rolling avg of a single observation IS the observation."""
         cfg = get_config()
         with gold_session(
-            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+            silver_root=cfg.paths.silver,
+            bronze_root=cfg.paths.bronze,
         ) as conn:
             df = conn.execute(player_valuation_rolling_avg.sql).fetchdf()
         # Find each player's first observation (rolling_sample_count == 1)
@@ -333,14 +349,15 @@ class TestPlayerValuationRollingAvg:
         rise monotonically too."""
         cfg = get_config()
         with gold_session(
-            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+            silver_root=cfg.paths.silver,
+            bronze_root=cfg.paths.bronze,
         ) as conn:
             df = conn.execute(player_valuation_rolling_avg.sql).fetchdf()
         saka = df[df["player_name"] == "Bukayo Saka"].sort_values("date")
         rolling_vals = saka["rolling_avg_90d"].tolist()
-        assert rolling_vals == sorted(rolling_vals), (
-            f"Rolling avg not monotonically increasing: {rolling_vals}"
-        )
+        assert rolling_vals == sorted(
+            rolling_vals
+        ), f"Rolling avg not monotonically increasing: {rolling_vals}"
 
     def test_scd2_as_of_join_resolved(self, silver_seeded):
         """Every valuation should resolve to a dim_players version
@@ -348,13 +365,14 @@ class TestPlayerValuationRollingAvg:
         FAR_PAST_DATE so every historical valuation window is covered."""
         cfg = get_config()
         with gold_session(
-            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+            silver_root=cfg.paths.silver,
+            bronze_root=cfg.paths.bronze,
         ) as conn:
             df = conn.execute(player_valuation_rolling_avg.sql).fetchdf()
         # Every row should have a resolved player_sk
-        assert df["player_sk"].notna().all(), (
-            f"{df['player_sk'].isna().sum()} valuations unresolved to dim_players"
-        )
+        assert (
+            df["player_sk"].notna().all()
+        ), f"{df['player_sk'].isna().sum()} valuations unresolved to dim_players"
 
 
 # ---------------------------------------------------------------------------
@@ -366,7 +384,8 @@ class TestClubPerformanceMetrics:
     def test_one_row_per_club(self, silver_seeded):
         cfg = get_config()
         with gold_session(
-            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+            silver_root=cfg.paths.silver,
+            bronze_root=cfg.paths.bronze,
         ) as conn:
             df = conn.execute(club_performance_metrics.sql).fetchdf()
         # 5 clubs in samples
@@ -377,7 +396,8 @@ class TestClubPerformanceMetrics:
         """Arsenal has the only clean sheet in the samples."""
         cfg = get_config()
         with gold_session(
-            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+            silver_root=cfg.paths.silver,
+            bronze_root=cfg.paths.bronze,
         ) as conn:
             df = conn.execute(club_performance_metrics.sql).fetchdf()
         arsenal = df[df["club_name"] == "Arsenal FC"].iloc[0]
@@ -390,7 +410,8 @@ class TestClubPerformanceMetrics:
         """win_rate = wins / matches_played, always."""
         cfg = get_config()
         with gold_session(
-            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+            silver_root=cfg.paths.silver,
+            bronze_root=cfg.paths.bronze,
         ) as conn:
             df = conn.execute(club_performance_metrics.sql).fetchdf()
         for _, row in df.iterrows():
@@ -404,7 +425,8 @@ class TestClubPerformanceMetrics:
         """clean_sheet_rate = clean_sheets / matches_played, always."""
         cfg = get_config()
         with gold_session(
-            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+            silver_root=cfg.paths.silver,
+            bronze_root=cfg.paths.bronze,
         ) as conn:
             df = conn.execute(club_performance_metrics.sql).fetchdf()
         for _, row in df.iterrows():
@@ -423,9 +445,9 @@ class TestPhase5RegistryComplete:
         all five Gold artifacts registered."""
         names = {a.name for a in ALL_ARTIFACTS}
         assert names == {
-            "top_scorers_by_season",       # §6.1
-            "club_season_summary",         # §6.2
-            "top_players_all_time",        # §6.3
-            "player_valuation_rolling_avg", # §6.4
-            "club_performance_metrics",    # §6.5
+            "top_scorers_by_season",  # §6.1
+            "club_season_summary",  # §6.2
+            "top_players_all_time",  # §6.3
+            "player_valuation_rolling_avg",  # §6.4
+            "club_performance_metrics",  # §6.5
         }

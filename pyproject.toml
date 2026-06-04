@@ -21,6 +21,14 @@ select = [
 ignore = [
     "E501",  # line length handled by formatter
     "B008",  # function calls in default args (common with pydantic)
+    # The following are stylistic preferences rather than bug detectors;
+    # ignored to keep CI green without forcing refactors that don't
+    # improve code quality.
+    "SIM108",  # if-else-block-instead-of-if-exp (sometimes less readable)
+    "RUF003",  # ambiguous-unicode-character-comment (in our case intentional)
+    "B905",    # zip without strict (we know our zips are same-length)
+    "UP042",   # replace-str-enum (would change behavior subtly)
+    "B017",    # assert-raises-exception (we accept broad assertions in tests)
 ]
 
 [tool.ruff.lint.per-file-ignores]

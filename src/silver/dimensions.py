@@ -49,9 +49,6 @@ import pandas as pd
 from src.engines.base import DataFrame, DataFrameEngine
 from src.ingestion.registry import SourceDefinition
 from src.silver.scd2 import (
-    EFFECTIVE_DATE_COLUMN,
-    END_DATE_COLUMN,
-    IS_CURRENT_COLUMN,
     SCD2MergeStats,
     scd2_merge,
 )
@@ -61,7 +58,6 @@ from src.silver.transforms import (
     normalise_position,
 )
 from src.utils.logging import get_logger
-
 
 log = get_logger(__name__)
 
@@ -102,10 +98,18 @@ def build_dim_clubs(
       stadium_name, stadium_seats, last_season
     """
     cols_to_keep = [
-        "club_id", "club_code", "name", "domestic_competition_id",
-        "total_market_value", "squad_size", "average_age",
-        "foreigners_number", "foreigners_percentage",
-        "national_team_players", "stadium_name", "stadium_seats",
+        "club_id",
+        "club_code",
+        "name",
+        "domestic_competition_id",
+        "total_market_value",
+        "squad_size",
+        "average_age",
+        "foreigners_number",
+        "foreigners_percentage",
+        "national_team_players",
+        "stadium_name",
+        "stadium_seats",
         "last_season",
     ]
     df = engine.select(bronze_clubs, [c for c in cols_to_keep if c in engine.columns(bronze_clubs)])
@@ -134,10 +138,18 @@ def build_dim_competitions(
     where present.
     """
     cols = engine.columns(bronze_competitions)
-    keep = [c for c in [
-        "competition_id", "name", "country_name", "sub_type", "type",
-        "confederation",
-    ] if c in cols]
+    keep = [
+        c
+        for c in [
+            "competition_id",
+            "name",
+            "country_name",
+            "sub_type",
+            "type",
+            "confederation",
+        ]
+        if c in cols
+    ]
     df = engine.select(bronze_competitions, keep)
 
     # Normalise country_name -> country_iso_code (additive column)
@@ -178,26 +190,26 @@ def build_dim_date(
     its construction is one-shot, not part of the hot path.
     """
     if end_date < start_date:
-        raise ValueError(
-            f"end_date {end_date} must not precede start_date {start_date}"
-        )
+        raise ValueError(f"end_date {end_date} must not precede start_date {start_date}")
 
     rows: list[dict] = []
     current = start_date
     while current <= end_date:
         iso = current.isoformat()
-        rows.append({
-            "date_key": int(current.strftime("%Y%m%d")),    # integer key 20240601 for joins
-            "date": iso,
-            "year": current.year,
-            "quarter": (current.month - 1) // 3 + 1,
-            "month": current.month,
-            "day": current.day,
-            "day_of_week": current.weekday(),                # 0=Mon, 6=Sun
-            "day_name": current.strftime("%A"),
-            "is_weekend": current.weekday() >= 5,
-            "season": derive_season(current),                # football season
-        })
+        rows.append(
+            {
+                "date_key": int(current.strftime("%Y%m%d")),  # integer key 20240601 for joins
+                "date": iso,
+                "year": current.year,
+                "quarter": (current.month - 1) // 3 + 1,
+                "month": current.month,
+                "day": current.day,
+                "day_of_week": current.weekday(),  # 0=Mon, 6=Sun
+                "day_name": current.strftime("%A"),
+                "is_weekend": current.weekday() >= 5,
+                "season": derive_season(current),  # football season
+            }
+        )
         current += timedelta(days=1)
 
     df = pd.DataFrame(rows)
@@ -245,9 +257,7 @@ def build_dim_players(
     not hardcoded — they come from sources.yaml.
     """
     if players_source.scd2 is None:
-        raise ValueError(
-            f"players_source must declare an scd2 spec; got {players_source.scd2}"
-        )
+        raise ValueError(f"players_source must declare an scd2 spec; got {players_source.scd2}")
 
     # --- Apply Silver transformations ----------------------------------
     # Position: normalise to canonical taxonomy
@@ -277,7 +287,6 @@ def build_dim_players(
     # column. The Silver builder is intentionally inclusive — Bronze had
     # the source's exact columns, Silver inherits them all (plus the
     # transformations we just added, minus the layer marker).
-    bronze_cols = engine.columns(bronze_players)
     silver_cols = [c for c in engine.columns(transformed) if c != BRONZE_BATCH_COLUMN]
     projected = engine.select(transformed, silver_cols)
 

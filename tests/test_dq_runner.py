@@ -25,7 +25,6 @@ from src.engines.pandas_engine import PandasEngine
 from src.metadata.db import init_db
 from src.utils.config import get_config
 
-
 SAMPLES_DIR = Path(__file__).resolve().parents[1] / "data" / "sample"
 
 
@@ -61,13 +60,33 @@ def bronze_seeded(fresh_db):
 class TestRunnerUnit:
     def test_clean_data_passes_through_unchanged(self, engine):
         """No critical failures, no quarantine."""
-        df = pd.DataFrame([
-            {"competition_id": "GB1", "name": "Premier League", "country_name": "England", "sub_type": "first_tier", "type": "domestic_league", "confederation": "uefa", "url": "u"},
-            {"competition_id": "ES1", "name": "La Liga", "country_name": "Spain", "sub_type": "first_tier", "type": "domestic_league", "confederation": "uefa", "url": "u"},
-        ])
+        df = pd.DataFrame(
+            [
+                {
+                    "competition_id": "GB1",
+                    "name": "Premier League",
+                    "country_name": "England",
+                    "sub_type": "first_tier",
+                    "type": "domestic_league",
+                    "confederation": "uefa",
+                    "url": "u",
+                },
+                {
+                    "competition_id": "ES1",
+                    "name": "La Liga",
+                    "country_name": "Spain",
+                    "sub_type": "first_tier",
+                    "type": "domestic_league",
+                    "confederation": "uefa",
+                    "url": "u",
+                },
+            ]
+        )
         result = run_dq_for_source(
-            source_name="competitions", df=df,
-            fk_lookups={}, engine=engine,
+            source_name="competitions",
+            df=df,
+            fk_lookups={},
+            engine=engine,
         )
         assert engine.count(result.clean_rows) == 2
         assert result.failing_rows is None
@@ -77,14 +96,18 @@ class TestRunnerUnit:
         """Synthetic FK violation — players.current_club_id references
         a non-existent club. The rule catches it; the failing row has
         _dq_failure_reason populated."""
-        df = pd.DataFrame([
-            {"player_id": 1001, "name": "Saka", "current_club_id": 1, "position": "RW"},
-            {"player_id": 1002, "name": "Orphan", "current_club_id": 999, "position": "ST"},
-        ])
+        df = pd.DataFrame(
+            [
+                {"player_id": 1001, "name": "Saka", "current_club_id": 1, "position": "RW"},
+                {"player_id": 1002, "name": "Orphan", "current_club_id": 999, "position": "ST"},
+            ]
+        )
         fk_lookups = {("clubs", "club_id"): {1, 2, 3}}
         result = run_dq_for_source(
-            source_name="players", df=df,
-            fk_lookups=fk_lookups, engine=engine,
+            source_name="players",
+            df=df,
+            fk_lookups=fk_lookups,
+            engine=engine,
         )
         assert engine.count(result.clean_rows) == 1
         assert result.failing_rows is not None
@@ -97,14 +120,23 @@ class TestRunnerUnit:
         """A row failing only a WARNING rule (not critical) passes through
         to clean_rows. The warning is recorded in outcomes."""
         # market_value out of warning range (>500M) but FK + not_null fine
-        df = pd.DataFrame([
-            {"player_id": 1001, "name": "Saka", "current_club_id": 1,
-             "position": "RW", "market_value_in_eur": 600_000_000},  # warning threshold = 500M
-        ])
+        df = pd.DataFrame(
+            [
+                {
+                    "player_id": 1001,
+                    "name": "Saka",
+                    "current_club_id": 1,
+                    "position": "RW",
+                    "market_value_in_eur": 600_000_000,
+                },  # warning threshold = 500M
+            ]
+        )
         fk_lookups = {("clubs", "club_id"): {1, 2, 3}}
         result = run_dq_for_source(
-            source_name="players", df=df,
-            fk_lookups=fk_lookups, engine=engine,
+            source_name="players",
+            df=df,
+            fk_lookups=fk_lookups,
+            engine=engine,
         )
         # The row passes through (warnings don't quarantine)
         assert engine.count(result.clean_rows) == 1
@@ -112,16 +144,29 @@ class TestRunnerUnit:
         # But the warning is reported
         assert len(result.warnings) >= 1
         market_value_warning = next(
-            (o for o in result.warnings if "market_value" in o.rule_id), None,
+            (o for o in result.warnings if "market_value" in o.rule_id),
+            None,
         )
         assert market_value_warning is not None
         assert market_value_warning.rows_failed == 1
 
     def test_empty_input_handled(self, engine):
-        df = pd.DataFrame(columns=["competition_id", "name", "country_name", "sub_type", "type", "confederation", "url"])
+        df = pd.DataFrame(
+            columns=[
+                "competition_id",
+                "name",
+                "country_name",
+                "sub_type",
+                "type",
+                "confederation",
+                "url",
+            ]
+        )
         result = run_dq_for_source(
-            source_name="competitions", df=df,
-            fk_lookups={}, engine=engine,
+            source_name="competitions",
+            df=df,
+            fk_lookups={},
+            engine=engine,
         )
         assert result.rows_in == 0
         assert engine.count(result.clean_rows) == 0
@@ -130,8 +175,10 @@ class TestRunnerUnit:
     def test_unknown_source_with_no_rules_passes_all(self, engine):
         df = pd.DataFrame([{"x": 1}, {"x": 2}])
         result = run_dq_for_source(
-            source_name="no_such_source", df=df,
-            fk_lookups={}, engine=engine,
+            source_name="no_such_source",
+            df=df,
+            fk_lookups={},
+            engine=engine,
         )
         assert result.rows_in == 2
         assert engine.count(result.clean_rows) == 2
@@ -149,7 +196,9 @@ class TestDQAgainstSamples:
         partition and produce correct sets."""
         cfg = get_config()
         lookups = build_fk_lookups(
-            bronze_root=cfg.paths.bronze, batch_id="2024-12-01", engine=engine,
+            bronze_root=cfg.paths.bronze,
+            batch_id="2024-12-01",
+            engine=engine,
         )
         # Spot-check known sizes from samples
         assert len(lookups[("competitions", "competition_id")]) == 3
@@ -163,12 +212,16 @@ class TestDQAgainstSamples:
         result.failing_rows with the right reason."""
         cfg = get_config()
         lookups = build_fk_lookups(
-            bronze_root=cfg.paths.bronze, batch_id="2024-12-01", engine=engine,
+            bronze_root=cfg.paths.bronze,
+            batch_id="2024-12-01",
+            engine=engine,
         )
         appearances = engine.read_parquet(cfg.paths.bronze / "appearances")
         result = run_dq_for_source(
-            source_name="appearances", df=appearances,
-            fk_lookups=lookups, engine=engine,
+            source_name="appearances",
+            df=appearances,
+            fk_lookups=lookups,
+            engine=engine,
         )
         assert result.rows_in == 30
         assert engine.count(result.clean_rows) == 29
@@ -176,7 +229,10 @@ class TestDQAgainstSamples:
         assert engine.count(result.failing_rows) == 1
         failing = engine.to_records(result.failing_rows)[0]
         assert failing["player_id"] == 9999
-        assert "foreign_key:appearances.player_id->players.player_id" in failing[DQ_FAILURE_REASON_COLUMN]
+        assert (
+            "foreign_key:appearances.player_id->players.player_id"
+            in failing[DQ_FAILURE_REASON_COLUMN]
+        )
 
     def test_clean_sources_have_no_critical_failures(self, bronze_seeded, engine):
         """The 5 sources WITHOUT seeded violations should have no
@@ -184,13 +240,17 @@ class TestDQAgainstSamples:
         positives on healthy data."""
         cfg = get_config()
         lookups = build_fk_lookups(
-            bronze_root=cfg.paths.bronze, batch_id="2024-12-01", engine=engine,
+            bronze_root=cfg.paths.bronze,
+            batch_id="2024-12-01",
+            engine=engine,
         )
         for source_name in ["competitions", "clubs", "players", "games", "player_valuations"]:
             df = engine.read_parquet(cfg.paths.bronze / source_name)
             result = run_dq_for_source(
-                source_name=source_name, df=df,
-                fk_lookups=lookups, engine=engine,
+                source_name=source_name,
+                df=df,
+                fk_lookups=lookups,
+                engine=engine,
             )
             assert result.failing_rows is None or engine.count(result.failing_rows) == 0, (
                 f"{source_name} unexpectedly had critical failures: "
@@ -207,16 +267,22 @@ class TestQuarantine:
     def test_quarantine_creates_partitioned_parquet(self, bronze_seeded, engine, tmp_path):
         cfg = get_config()
         lookups = build_fk_lookups(
-            bronze_root=cfg.paths.bronze, batch_id="2024-12-01", engine=engine,
+            bronze_root=cfg.paths.bronze,
+            batch_id="2024-12-01",
+            engine=engine,
         )
         appearances = engine.read_parquet(cfg.paths.bronze / "appearances")
         result = run_dq_for_source(
-            source_name="appearances", df=appearances,
-            fk_lookups=lookups, engine=engine,
+            source_name="appearances",
+            df=appearances,
+            fk_lookups=lookups,
+            engine=engine,
         )
         output_path = quarantine_rejected_rows(
-            dq_result=result, rejected_root=cfg.paths.rejected,
-            batch_id="2024-12-01", engine=engine,
+            dq_result=result,
+            rejected_root=cfg.paths.rejected,
+            batch_id="2024-12-01",
+            engine=engine,
         )
         assert output_path is not None
         # Hive partition layout
@@ -228,16 +294,22 @@ class TestQuarantine:
     def test_quarantine_writes_failure_reason_column(self, bronze_seeded, engine):
         cfg = get_config()
         lookups = build_fk_lookups(
-            bronze_root=cfg.paths.bronze, batch_id="2024-12-01", engine=engine,
+            bronze_root=cfg.paths.bronze,
+            batch_id="2024-12-01",
+            engine=engine,
         )
         appearances = engine.read_parquet(cfg.paths.bronze / "appearances")
         result = run_dq_for_source(
-            source_name="appearances", df=appearances,
-            fk_lookups=lookups, engine=engine,
+            source_name="appearances",
+            df=appearances,
+            fk_lookups=lookups,
+            engine=engine,
         )
         quarantine_rejected_rows(
-            dq_result=result, rejected_root=cfg.paths.rejected,
-            batch_id="2024-12-01", engine=engine,
+            dq_result=result,
+            rejected_root=cfg.paths.rejected,
+            batch_id="2024-12-01",
+            engine=engine,
         )
         # Read back and check
         quarantined = pd.read_parquet(cfg.paths.rejected / "appearances")
@@ -250,15 +322,21 @@ class TestQuarantine:
         is a no-op."""
         cfg = get_config()
         lookups = build_fk_lookups(
-            bronze_root=cfg.paths.bronze, batch_id="2024-12-01", engine=engine,
+            bronze_root=cfg.paths.bronze,
+            batch_id="2024-12-01",
+            engine=engine,
         )
         clubs = engine.read_parquet(cfg.paths.bronze / "clubs")
         result = run_dq_for_source(
-            source_name="clubs", df=clubs,
-            fk_lookups=lookups, engine=engine,
+            source_name="clubs",
+            df=clubs,
+            fk_lookups=lookups,
+            engine=engine,
         )
         out = quarantine_rejected_rows(
-            dq_result=result, rejected_root=cfg.paths.rejected,
-            batch_id="2024-12-01", engine=engine,
+            dq_result=result,
+            rejected_root=cfg.paths.rejected,
+            batch_id="2024-12-01",
+            engine=engine,
         )
         assert out is None

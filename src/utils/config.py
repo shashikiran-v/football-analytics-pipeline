@@ -20,7 +20,6 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
-
 # ---------------------------------------------------------------------------
 # Typed config models
 # ---------------------------------------------------------------------------
@@ -183,7 +182,7 @@ def load_config(path: str | Path | None = None) -> AppConfig:
     # Two-pass interpolation:
     # 1. Resolve scalars at the top level so paths.* can reference data_root.
     # 2. Walk the whole tree so nested values pick up newly-resolved keys.
-    flat_locals = {k: v for k, v in raw.items() if isinstance(v, (str, int, float, bool))}
+    flat_locals = {k: v for k, v in raw.items() if isinstance(v, str | int | float | bool)}
     interpolated = _walk_and_interpolate(raw, dict(os.environ), flat_locals)
     # paths/* often reference each other (lake -> bronze), so re-walk with
     # the now-resolved paths block exposed as locals.

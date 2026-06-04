@@ -32,7 +32,6 @@ from src.orchestration.airflow_wrappers import (
 )
 from src.silver.run import run_silver
 
-
 SAMPLES_DIR = Path(__file__).resolve().parents[1] / "data" / "sample"
 
 
@@ -44,6 +43,7 @@ SAMPLES_DIR = Path(__file__).resolve().parents[1] / "data" / "sample"
 def _airflow_available() -> bool:
     try:
         import airflow.exceptions  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -71,6 +71,7 @@ class TestBatchIdDerivation:
         pendulum.DateTime. We test with a stand-in object that has the
         same strftime contract."""
         from datetime import datetime
+
         context = {"data_interval_start": datetime(2026, 6, 3, 0, 0, 0)}
         assert _batch_id_from_context(context) == "2026-06-03"
 
@@ -79,6 +80,7 @@ class TestBatchIdDerivation:
         today's date — useful for ad-hoc reruns where Airflow's
         scheduled interval doesn't exist."""
         from datetime import date
+
         result = _batch_id_from_context({})
         # Should be today's date in YYYY-MM-DD format
         assert result == date.today().isoformat()
@@ -95,6 +97,7 @@ class TestBronzeTask:
         """Bronze task against the sample data returns a summary dict
         usable for downstream XCom or assertions."""
         from datetime import datetime
+
         result = run_bronze_task(
             raw_root=str(SAMPLES_DIR),
             data_interval_start=datetime(2026, 6, 3, 0, 0, 0),
@@ -108,8 +111,10 @@ class TestBronzeTask:
     def test_raises_airflow_exception_on_layer_failure(self, fresh_db):
         """If Bronze reports failed status, the wrapper must raise
         AirflowException so Airflow marks the task FAILED."""
-        from airflow.exceptions import AirflowException
         from datetime import datetime
+
+        from airflow.exceptions import AirflowException
+
         # Force a Bronze failure by pointing at a non-existent raw_root.
         # Every source will fail; layer_status will be 'failed'.
         with pytest.raises(AirflowException, match="Bronze layer failed"):
@@ -129,6 +134,7 @@ class TestSilverTask:
     def test_happy_path(self, fresh_db):
         """Silver after Bronze succeeds → wrapper returns success dict."""
         from datetime import datetime
+
         # Need Bronze data first
         run_bronze(batch_id="2026-06-03", raw_root=SAMPLES_DIR)
         result = run_silver_task(
@@ -151,6 +157,7 @@ class TestDqGateTask:
         """The sample data has 1 quarantined row out of 30 appearances
         (~3.3%). With threshold 5%, the gate should pass."""
         from datetime import datetime
+
         run_bronze(batch_id="2026-06-03", raw_root=SAMPLES_DIR)
         run_silver(batch_id="2026-06-03")
         result = dq_gate_task(
@@ -168,8 +175,10 @@ class TestDqGateTask:
     def test_gate_fails_when_threshold_exceeded(self, fresh_db):
         """Force a fail by setting a very low threshold (any quarantine
         triggers the gate)."""
-        from airflow.exceptions import AirflowException
         from datetime import datetime
+
+        from airflow.exceptions import AirflowException
+
         run_bronze(batch_id="2026-06-03", raw_root=SAMPLES_DIR)
         run_silver(batch_id="2026-06-03")
         with pytest.raises(AirflowException, match="DQ gate failed"):
@@ -184,6 +193,7 @@ class TestDqGateTask:
         a pass with a 'pass_no_report' decision — covers manual-trigger
         sequences where Silver may not have run."""
         from datetime import datetime
+
         result = dq_gate_task(
             quarantine_threshold_pct=5.0,
             data_interval_start=datetime(2026, 6, 3, 0, 0, 0),
@@ -203,6 +213,7 @@ class TestGoldTask:
         """Gold after Silver succeeds → wrapper returns success dict
         with all 5 artifacts written."""
         from datetime import datetime
+
         run_bronze(batch_id="2026-06-03", raw_root=SAMPLES_DIR)
         run_silver(batch_id="2026-06-03")
         result = run_gold_task(

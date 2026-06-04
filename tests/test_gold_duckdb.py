@@ -9,20 +9,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pandas as pd
 import pytest
 
 from src.bronze.run import run_bronze
 from src.gold.duckdb_session import (
-    BRONZE_DIRECT_VIEWS,
     SILVER_VIEWS,
     gold_session,
-    register_views,
 )
 from src.metadata.db import init_db
 from src.silver.run import run_silver
 from src.utils.config import get_config
-
 
 SAMPLES_DIR = Path(__file__).resolve().parents[1] / "data" / "sample"
 
@@ -43,7 +39,8 @@ class TestRegisterViews:
     def test_all_silver_views_registered(self, silver_seeded):
         cfg = get_config()
         with gold_session(
-            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+            silver_root=cfg.paths.silver,
+            bronze_root=cfg.paths.bronze,
         ) as conn:
             # Query DuckDB's information_schema for registered views
             views = conn.execute(
@@ -58,18 +55,18 @@ class TestRegisterViews:
     def test_bronze_direct_view_registered(self, silver_seeded):
         cfg = get_config()
         with gold_session(
-            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+            silver_root=cfg.paths.silver,
+            bronze_root=cfg.paths.bronze,
         ) as conn:
-            count = conn.execute(
-                "SELECT COUNT(*) FROM bronze_player_valuations"
-            ).fetchone()[0]
+            count = conn.execute("SELECT COUNT(*) FROM bronze_player_valuations").fetchone()[0]
         # Sample has 18 valuations
         assert count == 18
 
     def test_dim_players_queryable(self, silver_seeded):
         cfg = get_config()
         with gold_session(
-            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+            silver_root=cfg.paths.silver,
+            bronze_root=cfg.paths.bronze,
         ) as conn:
             df = conn.execute("SELECT * FROM dim_players").fetchdf()
         # Samples have 12 players
@@ -80,11 +77,10 @@ class TestRegisterViews:
         (orphan player_id=9999 quarantined). Verify Gold sees this."""
         cfg = get_config()
         with gold_session(
-            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+            silver_root=cfg.paths.silver,
+            bronze_root=cfg.paths.bronze,
         ) as conn:
-            count = conn.execute(
-                "SELECT COUNT(*) FROM fact_appearances"
-            ).fetchone()[0]
+            count = conn.execute("SELECT COUNT(*) FROM fact_appearances").fetchone()[0]
         assert count == 29
 
     def test_missing_silver_data_skipped_gracefully(self, fresh_db, tmp_path):
@@ -92,15 +88,13 @@ class TestRegisterViews:
         skipped (with a log warning), not raised. Gold runs that depend
         on the missing view will fail at query time with a clear
         DuckDB error — but the session itself opens fine."""
-        cfg = get_config()
         with gold_session(
-            silver_root=tmp_path,                   # empty directory
-            bronze_root=tmp_path,                   # empty directory
+            silver_root=tmp_path,  # empty directory
+            bronze_root=tmp_path,  # empty directory
         ) as conn:
             # No views registered, but session opens
             views = conn.execute(
-                "SELECT table_name FROM information_schema.tables "
-                "WHERE table_type='VIEW'"
+                "SELECT table_name FROM information_schema.tables WHERE table_type='VIEW'"
             ).fetchall()
         assert len(views) == 0
 
@@ -109,7 +103,8 @@ class TestSessionLifecycle:
     def test_context_manager_closes_connection(self, silver_seeded):
         cfg = get_config()
         with gold_session(
-            silver_root=cfg.paths.silver, bronze_root=cfg.paths.bronze,
+            silver_root=cfg.paths.silver,
+            bronze_root=cfg.paths.bronze,
         ) as conn:
             captured = conn
         # After exit, attempting to use the connection should fail

@@ -17,7 +17,6 @@ from src.engines.base import DataFrameEngine
 from src.utils.config import get_config
 from src.utils.logging import get_logger
 
-
 log = get_logger(__name__)
 
 
@@ -28,7 +27,7 @@ def _build_engine(kind: str) -> DataFrameEngine:
         return PandasEngine()
     if kind == "spark":
         # Lazy import: pyspark startup is ~3s, skip it for pandas runs.
-        from src.engines.spark_engine import SparkEngine  # noqa: F401
+        from src.engines.spark_engine import SparkEngine
 
         return SparkEngine()
     raise ValueError(f"Unknown engine kind: {kind!r} (expected 'pandas' or 'spark')")

@@ -52,7 +52,6 @@ from src.orchestration.airflow_wrappers import (
     run_silver_task,
 )
 
-
 # Default args shared by every task in the DAG.
 # Per ADR-0010: one retry per task is the right default. Runners are
 # idempotent so retries are safe; more than one risks masking real
@@ -81,7 +80,6 @@ with DAG(
     max_active_runs=1,
     tags=["football", "medallion", "scd2"],
 ) as dag:
-
     bronze = PythonOperator(
         task_id="bronze",
         python_callable=run_bronze_task,

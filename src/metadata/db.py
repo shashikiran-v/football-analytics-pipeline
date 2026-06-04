@@ -29,13 +29,12 @@ DQ task writing while a run task updates status).
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
 
 from src.utils.config import get_config
 from src.utils.logging import get_logger
-
 
 log = get_logger(__name__)
 

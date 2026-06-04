@@ -28,7 +28,6 @@ from src.metadata.db import init_db
 from src.silver.run import run_silver
 from src.utils.config import get_config
 
-
 SAMPLES_DIR = Path(__file__).resolve().parents[1] / "data" / "sample"
 SAMPLES_DAY2_DIR = Path(__file__).resolve().parents[1] / "data" / "sample" / "day2"
 
@@ -62,17 +61,15 @@ class TestFileGrainIdempotencyDay2:
         by_source = {r.source_name: r for r in summary.results}
         # Three should be skipped
         for skipped_source in ("clubs", "competitions", "player_valuations"):
-            assert by_source[skipped_source].status == "skipped", (
-                f"{skipped_source} status is {by_source[skipped_source].status}, "
-                f"expected 'skipped'"
-            )
+            assert (
+                by_source[skipped_source].status == "skipped"
+            ), f"{skipped_source} status is {by_source[skipped_source].status}, expected 'skipped'"
             assert "day-1" in (by_source[skipped_source].skip_reason or "")
         # Three should be freshly written
         for written_source in ("players", "games", "appearances"):
-            assert by_source[written_source].status == "written", (
-                f"{written_source} status is {by_source[written_source].status}, "
-                f"expected 'written'"
-            )
+            assert (
+                by_source[written_source].status == "written"
+            ), f"{written_source} status is {by_source[written_source].status}, expected 'written'"
 
     def test_day2_skip_does_not_write_new_partition(self, fresh_db):
         """The whole point of file-grain idempotency: don't waste I/O
@@ -82,13 +79,10 @@ class TestFileGrainIdempotencyDay2:
         run_bronze(batch_id="day-2", raw_root=SAMPLES_DAY2_DIR)
         cfg = get_config()
         for skipped_source in ("clubs", "competitions", "player_valuations"):
-            day2_partition = (
-                cfg.paths.bronze / skipped_source / "batch_id=day-2"
-            )
-            assert not day2_partition.is_dir(), (
-                f"Expected {day2_partition} to not exist (file-grain skip), "
-                f"but it does"
-            )
+            day2_partition = cfg.paths.bronze / skipped_source / "batch_id=day-2"
+            assert (
+                not day2_partition.is_dir()
+            ), f"Expected {day2_partition} to not exist (file-grain skip), but it does"
 
 
 # ---------------------------------------------------------------------------
@@ -124,10 +118,9 @@ class TestAuditLineageAcrossBatches:
         # the ones whose Bronze partition was skipped (Silver read from
         # day-1's partition via the resolver)
         for src in ("clubs", "competitions", "players", "games", "appearances"):
-            assert by_source[src].status == FileStatus.TRANSFORMED, (
-                f"{src} day-2 status is {by_source[src].status.value}, "
-                f"expected 'transformed'"
-            )
+            assert (
+                by_source[src].status == FileStatus.TRANSFORMED
+            ), f"{src} day-2 status is {by_source[src].status.value}, expected 'transformed'"
 
     def test_day2_silver_row_counts_match_dim_outputs(self, both_batches):
         """The audit row's silver_row_count for each source should match
@@ -190,9 +183,7 @@ class TestFactAppearancesAcrossBatches:
         the day-1 fact_appearances state (29 rows). Day-2's processing
         must not retroactively touch day-1's parquet."""
         cfg = get_config()
-        day1_fact = pd.read_parquet(
-            cfg.paths.silver / "fact_appearances" / "batch_id=day-1"
-        )
+        day1_fact = pd.read_parquet(cfg.paths.silver / "fact_appearances" / "batch_id=day-1")
         # Day-1 had 30 source rows, 1 quarantined = 29 in Silver
         assert len(day1_fact) == 29
 

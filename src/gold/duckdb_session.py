@@ -37,14 +37,13 @@ analyst-facing payoff of the whole Medallion architecture.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
 
 import duckdb
 
 from src.utils.logging import get_logger
-
 
 log = get_logger(__name__)
 
@@ -54,12 +53,12 @@ log = get_logger(__name__)
 # The view name is what Gold queries reference; the subdir is where the
 # Parquet partitions live under paths.silver.
 SILVER_VIEWS: dict[str, str] = {
-    "dim_clubs":         "dim_clubs",
-    "dim_competitions":  "dim_competitions",
-    "dim_date":          "dim_date",
-    "dim_players":       "dim_players",
-    "fact_games":        "fact_games",
-    "fact_appearances":  "fact_appearances",
+    "dim_clubs": "dim_clubs",
+    "dim_competitions": "dim_competitions",
+    "dim_date": "dim_date",
+    "dim_players": "dim_players",
+    "fact_games": "fact_games",
+    "fact_appearances": "fact_appearances",
 }
 
 # Bronze sources that Gold queries directly (no Silver layer exists).
@@ -72,10 +71,7 @@ BRONZE_DIRECT_VIEWS: dict[str, str] = {
 
 def _make_view_sql(view_name: str, parquet_glob: str) -> str:
     """Build the CREATE VIEW SQL for one Silver/Bronze table."""
-    return (
-        f"CREATE OR REPLACE VIEW {view_name} AS "
-        f"SELECT * FROM read_parquet('{parquet_glob}')"
-    )
+    return f"CREATE OR REPLACE VIEW {view_name} AS SELECT * FROM read_parquet('{parquet_glob}')"
 
 
 def register_views(
@@ -101,7 +97,8 @@ def register_views(
         if not artifact_dir.is_dir():
             log.warning(
                 "gold_view_skipped_no_silver_data",
-                view=view_name, expected_dir=str(artifact_dir),
+                view=view_name,
+                expected_dir=str(artifact_dir),
             )
             continue
         # The **/*.parquet glob pulls every partition under the artifact.
@@ -116,7 +113,8 @@ def register_views(
         if not artifact_dir.is_dir():
             log.warning(
                 "gold_view_skipped_no_bronze_data",
-                view=view_name, expected_dir=str(artifact_dir),
+                view=view_name,
+                expected_dir=str(artifact_dir),
             )
             continue
         glob = f"{artifact_dir}/**/*.parquet"

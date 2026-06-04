@@ -9,8 +9,6 @@ itself (that's in test_dq_runner.py).
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
-from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -49,7 +47,8 @@ class TestBuildSourceReport:
                 DQRuleOutcome(
                     rule_id="not_null:clubs:club_id",
                     severity="critical",
-                    rows_evaluated=5, rows_failed=0,
+                    rows_evaluated=5,
+                    rows_failed=0,
                 ),
             ],
         )
@@ -71,7 +70,8 @@ class TestBuildSourceReport:
                 DQRuleOutcome(
                     rule_id="foreign_key:appearances.player_id->players.player_id",
                     severity="critical",
-                    rows_evaluated=30, rows_failed=1,
+                    rows_evaluated=30,
+                    rows_failed=1,
                 ),
             ],
         )
@@ -90,19 +90,21 @@ class TestBuildSourceReport:
                 DQRuleOutcome(
                     rule_id="critical_rule",
                     severity="critical",
-                    rows_evaluated=10, rows_failed=3,
+                    rows_evaluated=10,
+                    rows_failed=3,
                 ),
                 DQRuleOutcome(
                     rule_id="warning_rule",
                     severity="warning",
-                    rows_evaluated=10, rows_failed=1,
+                    rows_evaluated=10,
+                    rows_failed=1,
                 ),
             ],
         )
         report = build_source_report(result=result, engine=engine)
         assert len(report.rules) == 2
-        assert report.rules[0].pass_rate == 0.7      # 7/10
-        assert report.rules[1].pass_rate == 0.9      # 9/10
+        assert report.rules[0].pass_rate == 0.7  # 7/10
+        assert report.rules[1].pass_rate == 0.9  # 9/10
 
 
 # ---------------------------------------------------------------------------
@@ -121,21 +123,25 @@ def _make_source_report(
     """Helper to build a DQSourceReport for batch-level tests."""
     rules: list[DQRuleReport] = []
     if critical_failed > 0:
-        rules.append(DQRuleReport(
-            rule_id=f"critical:{source_name}",
-            severity="critical",
-            rows_evaluated=rows_in,
-            rows_failed=critical_failed,
-            pass_rate=round((rows_in - critical_failed) / rows_in, 6) if rows_in else 1.0,
-        ))
+        rules.append(
+            DQRuleReport(
+                rule_id=f"critical:{source_name}",
+                severity="critical",
+                rows_evaluated=rows_in,
+                rows_failed=critical_failed,
+                pass_rate=round((rows_in - critical_failed) / rows_in, 6) if rows_in else 1.0,
+            )
+        )
     if warning_failed > 0:
-        rules.append(DQRuleReport(
-            rule_id=f"warning:{source_name}",
-            severity="warning",
-            rows_evaluated=rows_in,
-            rows_failed=warning_failed,
-            pass_rate=round((rows_in - warning_failed) / rows_in, 6) if rows_in else 1.0,
-        ))
+        rules.append(
+            DQRuleReport(
+                rule_id=f"warning:{source_name}",
+                severity="warning",
+                rows_evaluated=rows_in,
+                rows_failed=warning_failed,
+                pass_rate=round((rows_in - warning_failed) / rows_in, 6) if rows_in else 1.0,
+            )
+        )
     return DQSourceReport(
         source_name=source_name,
         rows_in=rows_in,
@@ -163,8 +169,10 @@ class TestBuildBatchReport:
         sources = [
             _make_source_report(source_name="clubs", rows_in=5),
             _make_source_report(
-                source_name="appearances", rows_in=30,
-                rows_quarantined=1, critical_failed=1,
+                source_name="appearances",
+                rows_in=30,
+                rows_quarantined=1,
+                critical_failed=1,
             ),
         ]
         report = build_batch_report(batch_id="b1", source_reports=sources)
@@ -177,7 +185,8 @@ class TestBuildBatchReport:
     def test_warnings_counted_separately(self):
         sources = [
             _make_source_report(
-                source_name="players", rows_in=12,
+                source_name="players",
+                rows_in=12,
                 warning_failed=2,
             ),
         ]
@@ -201,8 +210,11 @@ class TestWriteReport:
             batch_id="test-batch",
             generated_at="2026-01-01T00:00:00Z",
             summary=DQBatchSummary(
-                total_rows_in=0, total_rows_clean=0, total_rows_quarantined=0,
-                critical_failure_count=0, warning_count=0,
+                total_rows_in=0,
+                total_rows_clean=0,
+                total_rows_quarantined=0,
+                critical_failure_count=0,
+                warning_count=0,
                 sources_with_critical_failures=[],
             ),
             sources=[],
@@ -227,8 +239,11 @@ class TestWriteReport:
             batch_id="b1",
             generated_at="2026-01-01T00:00:00Z",
             summary=DQBatchSummary(
-                total_rows_in=0, total_rows_clean=0, total_rows_quarantined=0,
-                critical_failure_count=0, warning_count=0,
+                total_rows_in=0,
+                total_rows_clean=0,
+                total_rows_quarantined=0,
+                critical_failure_count=0,
+                warning_count=0,
                 sources_with_critical_failures=[],
             ),
             sources=[],

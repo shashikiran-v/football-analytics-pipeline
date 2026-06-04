@@ -44,18 +44,18 @@ import argparse
 import sys
 import traceback
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
 
+from src.bronze.resolver import resolve_bronze_partition
+from src.dq.quarantine import quarantine_rejected_rows
+from src.dq.report import build_batch_report, build_source_report, write_report
+from src.dq.runner import DQResult, build_fk_lookups, run_dq_for_source
 from src.engines.base import DataFrame, DataFrameEngine
 from src.engines.factory import get_engine
 from src.ingestion.registry import get_registry
 from src.metadata import audit, runs
 from src.metadata.db import init_db
-from src.bronze.resolver import resolve_bronze_partition
-from src.dq.quarantine import quarantine_rejected_rows
-from src.dq.report import build_batch_report, build_source_report, write_report
-from src.dq.runner import DQResult, build_fk_lookups, run_dq_for_source
 from src.silver.dimensions import (
     build_dim_clubs,
     build_dim_competitions,
@@ -65,7 +65,6 @@ from src.silver.dimensions import (
 from src.silver.facts import build_fact_appearances, build_fact_games
 from src.utils.config import get_config
 from src.utils.logging import bind_batch_context, configure_logging, get_logger
-
 
 log = get_logger(__name__)
 
@@ -85,8 +84,8 @@ _DIM_DATE_END = date(2030, 12, 31)
 class SilverBuildResult:
     """Per-artifact outcome of a Silver build."""
 
-    artifact_name: str               # 'dim_clubs' | 'fact_appearances' | ...
-    status: str                      # 'written' | 'failed'
+    artifact_name: str  # 'dim_clubs' | 'fact_appearances' | ...
+    status: str  # 'written' | 'failed'
     rows_written: int
     output_path: Path | None
     # The Bronze source this artifact attributes to (for audit). None for
@@ -100,10 +99,10 @@ class SilverRunSummary:
     """Aggregate outcome of a Silver run across all artifacts."""
 
     batch_id: str
-    layer_status: str                # 'success' | 'failed' | 'skipped'
+    layer_status: str  # 'success' | 'failed' | 'skipped'
     results: list[SilverBuildResult]
     skipped_layer: bool = False
-    dq_report_path: Path | None = None    # JSON report location, when DQ ran
+    dq_report_path: Path | None = None  # JSON report location, when DQ ran
 
     @property
     def total_rows(self) -> int:
@@ -152,7 +151,7 @@ def _derive_batch_timestamp(batch_id: str) -> str:
         except ValueError:
             continue
     # Fallback: UTC now (date-granularity).
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return datetime.now(UTC).strftime("%Y-%m-%d")
 
 
 def _read_bronze(
@@ -177,7 +176,9 @@ def _read_bronze(
     records a per-artifact failure.
     """
     path = resolve_bronze_partition(
-        bronze_root=bronze_root, source_name=source_name, batch_id=batch_id,
+        bronze_root=bronze_root,
+        source_name=source_name,
+        batch_id=batch_id,
     )
     if path is None:
         raise FileNotFoundError(
@@ -254,9 +255,7 @@ def _format_summary(summary: SilverRunSummary) -> str:
             detail = f"rows={r.rows_written}"
         else:
             detail = f"error={r.error_message}"
-        lines.append(
-            f"    {r.artifact_name:<{width}}  {r.status:<8}  {detail}"
-        )
+        lines.append(f"    {r.artifact_name:<{width}}  {r.status:<8}  {detail}")
     return "\n".join(lines)
 
 
@@ -291,11 +290,18 @@ def _build_artifact_safe(
         df = builder_fn()
         rows = engine.count(df)
         output_path = _write_silver_artifact(
-            df=df, silver_root=silver_root,
-            artifact_name=artifact_name, batch_id=batch_id, engine=engine,
+            df=df,
+            silver_root=silver_root,
+            artifact_name=artifact_name,
+            batch_id=batch_id,
+            engine=engine,
         )
-        log.info("silver_artifact_written",
-                 artifact=artifact_name, rows=rows, output_path=str(output_path))
+        log.info(
+            "silver_artifact_written",
+            artifact=artifact_name,
+            rows=rows,
+            output_path=str(output_path),
+        )
         return SilverBuildResult(
             artifact_name=artifact_name,
             status="written",
@@ -305,8 +311,7 @@ def _build_artifact_safe(
         )
     except Exception as e:
         tb = traceback.format_exc()
-        log.error("silver_artifact_failed",
-                  artifact=artifact_name, error=str(e), traceback=tb)
+        log.error("silver_artifact_failed", artifact=artifact_name, error=str(e), traceback=tb)
         return SilverBuildResult(
             artifact_name=artifact_name,
             status="failed",
@@ -337,7 +342,7 @@ def run_silver(*, batch_id: str | None = None) -> SilverRunSummary:
     init_db()
 
     if batch_id is None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if cfg.batch.granularity == "hourly":
             batch_id = now.strftime("%Y-%m-%dT%H")
         elif cfg.batch.granularity == "daily":
@@ -352,10 +357,7 @@ def run_silver(*, batch_id: str | None = None) -> SilverRunSummary:
 
     with bind_batch_context(batch_id=batch_id, layer="silver"):
         # ===== Layer-grain idempotency check =============================
-        if (
-            cfg.batch.skip_if_already_succeeded
-            and runs.has_succeeded(batch_id, "silver")
-        ):
+        if cfg.batch.skip_if_already_succeeded and runs.has_succeeded(batch_id, "silver"):
             log.info("silver_layer_skipped_already_succeeded")
             return SilverRunSummary(
                 batch_id=batch_id,
@@ -380,13 +382,19 @@ def run_silver(*, batch_id: str | None = None) -> SilverRunSummary:
         clean_bronze: dict[str, DataFrame] = {}
         dq_results: list[DQResult] = []
         sources_with_bronze = [
-            "clubs", "competitions", "players", "games", "appearances",
+            "clubs",
+            "competitions",
+            "players",
+            "games",
+            "appearances",
         ]
 
         # Pre-build FK lookup sets from Bronze for all FK rules
         try:
             fk_lookups = build_fk_lookups(
-                bronze_root=bronze_root, batch_id=batch_id, engine=engine,
+                bronze_root=bronze_root,
+                batch_id=batch_id,
+                engine=engine,
             )
         except Exception as e:
             log.error("dq_fk_lookups_failed", error=str(e))
@@ -395,8 +403,10 @@ def run_silver(*, batch_id: str | None = None) -> SilverRunSummary:
         for src_name in sources_with_bronze:
             try:
                 bronze_df = _read_bronze(
-                    bronze_root=bronze_root, source_name=src_name,
-                    batch_id=batch_id, engine=engine,
+                    bronze_root=bronze_root,
+                    source_name=src_name,
+                    batch_id=batch_id,
+                    engine=engine,
                 )
             except FileNotFoundError as e:
                 # Bronze partition missing — defer the failure to the
@@ -404,14 +414,17 @@ def run_silver(*, batch_id: str | None = None) -> SilverRunSummary:
                 # 'failed' result with a clear error. Don't crash here.
                 log.warning(
                     "silver_dq_skipped_missing_bronze",
-                    source=src_name, error=str(e),
+                    source=src_name,
+                    error=str(e),
                 )
                 continue
 
             try:
                 result = run_dq_for_source(
-                    source_name=src_name, df=bronze_df,
-                    fk_lookups=fk_lookups, engine=engine,
+                    source_name=src_name,
+                    df=bronze_df,
+                    fk_lookups=fk_lookups,
+                    engine=engine,
                 )
                 dq_results.append(result)
                 clean_bronze[src_name] = result.clean_rows
@@ -421,7 +434,8 @@ def run_silver(*, batch_id: str | None = None) -> SilverRunSummary:
                     quarantine_rejected_rows(
                         dq_result=result,
                         rejected_root=cfg.paths.rejected,
-                        batch_id=batch_id, engine=engine,
+                        batch_id=batch_id,
+                        engine=engine,
                     )
                     failing_count = engine.count(result.failing_rows)
                     try:
@@ -433,7 +447,8 @@ def run_silver(*, batch_id: str | None = None) -> SilverRunSummary:
                     except Exception as e:
                         log.error(
                             "audit_record_quarantine_failed",
-                            source=src_name, error=str(e),
+                            source=src_name,
+                            error=str(e),
                         )
             except Exception as e:
                 # DQ itself failing is rare but possible. Fall back to
@@ -446,15 +461,14 @@ def run_silver(*, batch_id: str | None = None) -> SilverRunSummary:
         dq_report_path: Path | None = None
         if dq_results:
             try:
-                source_reports = [
-                    build_source_report(result=r, engine=engine)
-                    for r in dq_results
-                ]
+                source_reports = [build_source_report(result=r, engine=engine) for r in dq_results]
                 report = build_batch_report(
-                    batch_id=batch_id, source_reports=source_reports,
+                    batch_id=batch_id,
+                    source_reports=source_reports,
                 )
                 dq_report_path = write_report(
-                    report=report, output_dir=cfg.paths.dq_reports,
+                    report=report,
+                    output_dir=cfg.paths.dq_reports,
                 )
             except Exception as e:
                 log.error("dq_report_write_failed", error=str(e))
@@ -464,8 +478,11 @@ def run_silver(*, batch_id: str | None = None) -> SilverRunSummary:
         # mark_transforming up-front. Failures during specific builds
         # downgrade individual sources to mark_failed.
         sources_to_transform = [
-            "clubs", "competitions", "players",
-            "games", "appearances",
+            "clubs",
+            "competitions",
+            "players",
+            "games",
+            "appearances",
         ]
         for src_name in sources_to_transform:
             try:
@@ -477,7 +494,8 @@ def run_silver(*, batch_id: str | None = None) -> SilverRunSummary:
                 # context about WHY the source is missing.
                 log.warning(
                     "silver_mark_transforming_failed",
-                    source=src_name, error=str(e),
+                    source=src_name,
+                    error=str(e),
                 )
 
         results: list[SilverBuildResult] = []
@@ -493,11 +511,17 @@ def run_silver(*, batch_id: str | None = None) -> SilverRunSummary:
                 bronze_clubs=clean_bronze["clubs"],
                 engine=engine,
             )
-        results.append(_build_artifact_safe(
-            artifact_name="dim_clubs", audit_source_name="clubs",
-            builder_fn=_build_dim_clubs,
-            batch_id=batch_id, silver_root=silver_root, engine=engine,
-        ))
+
+        results.append(
+            _build_artifact_safe(
+                artifact_name="dim_clubs",
+                audit_source_name="clubs",
+                builder_fn=_build_dim_clubs,
+                batch_id=batch_id,
+                silver_root=silver_root,
+                engine=engine,
+            )
+        )
 
         # ===== Build dim_competitions ==================================
         def _build_dim_competitions():
@@ -509,11 +533,17 @@ def run_silver(*, batch_id: str | None = None) -> SilverRunSummary:
                 bronze_competitions=clean_bronze["competitions"],
                 engine=engine,
             )
-        results.append(_build_artifact_safe(
-            artifact_name="dim_competitions", audit_source_name="competitions",
-            builder_fn=_build_dim_competitions,
-            batch_id=batch_id, silver_root=silver_root, engine=engine,
-        ))
+
+        results.append(
+            _build_artifact_safe(
+                artifact_name="dim_competitions",
+                audit_source_name="competitions",
+                builder_fn=_build_dim_competitions,
+                batch_id=batch_id,
+                silver_root=silver_root,
+                engine=engine,
+            )
+        )
 
         # ===== Build dim_date (generated, no Bronze source) ============
         def _build_dim_date():
@@ -522,11 +552,17 @@ def run_silver(*, batch_id: str | None = None) -> SilverRunSummary:
                 end_date=_DIM_DATE_END,
                 engine=engine,
             )
-        results.append(_build_artifact_safe(
-            artifact_name="dim_date", audit_source_name=None,
-            builder_fn=_build_dim_date,
-            batch_id=batch_id, silver_root=silver_root, engine=engine,
-        ))
+
+        results.append(
+            _build_artifact_safe(
+                artifact_name="dim_date",
+                audit_source_name=None,
+                builder_fn=_build_dim_date,
+                batch_id=batch_id,
+                silver_root=silver_root,
+                engine=engine,
+            )
+        )
 
         # ===== Build dim_players (Type-2, needs existing state) ========
         dim_players_df: DataFrame | None = None
@@ -545,7 +581,8 @@ def run_silver(*, batch_id: str | None = None) -> SilverRunSummary:
                 )
             players_source = registry.get("players")
             existing = _read_existing_dim_players(
-                silver_root=silver_root, engine=engine,
+                silver_root=silver_root,
+                engine=engine,
             )
             merged, _stats = build_dim_players(
                 bronze_players=clean_bronze["players"],
@@ -557,11 +594,16 @@ def run_silver(*, batch_id: str | None = None) -> SilverRunSummary:
             dim_players_df = merged
             return merged
 
-        results.append(_build_artifact_safe(
-            artifact_name="dim_players", audit_source_name="players",
-            builder_fn=_build_dim_players,
-            batch_id=batch_id, silver_root=silver_root, engine=engine,
-        ))
+        results.append(
+            _build_artifact_safe(
+                artifact_name="dim_players",
+                audit_source_name="players",
+                builder_fn=_build_dim_players,
+                batch_id=batch_id,
+                silver_root=silver_root,
+                engine=engine,
+            )
+        )
 
         # ===== Build fact_games ========================================
         def _build_fact_games():
@@ -573,11 +615,17 @@ def run_silver(*, batch_id: str | None = None) -> SilverRunSummary:
                 bronze_games=clean_bronze["games"],
                 engine=engine,
             )
-        results.append(_build_artifact_safe(
-            artifact_name="fact_games", audit_source_name="games",
-            builder_fn=_build_fact_games,
-            batch_id=batch_id, silver_root=silver_root, engine=engine,
-        ))
+
+        results.append(
+            _build_artifact_safe(
+                artifact_name="fact_games",
+                audit_source_name="games",
+                builder_fn=_build_fact_games,
+                batch_id=batch_id,
+                silver_root=silver_root,
+                engine=engine,
+            )
+        )
 
         # ===== Build fact_appearances ==================================
         # This requires dim_players to have succeeded; if it didn't,
@@ -597,11 +645,17 @@ def run_silver(*, batch_id: str | None = None) -> SilverRunSummary:
                 dim_players=dim_players_df,
                 engine=engine,
             )
-        results.append(_build_artifact_safe(
-            artifact_name="fact_appearances", audit_source_name="appearances",
-            builder_fn=_build_fact_appearances,
-            batch_id=batch_id, silver_root=silver_root, engine=engine,
-        ))
+
+        results.append(
+            _build_artifact_safe(
+                artifact_name="fact_appearances",
+                audit_source_name="appearances",
+                builder_fn=_build_fact_appearances,
+                batch_id=batch_id,
+                silver_root=silver_root,
+                engine=engine,
+            )
+        )
 
         # ===== Audit reconciliation pass ================================
         # For each source whose artifact succeeded, record_silver_complete
@@ -609,7 +663,7 @@ def run_silver(*, batch_id: str | None = None) -> SilverRunSummary:
         # that failed, mark_failed on the source's audit rows.
         for r in results:
             if r.audit_source_name is None:
-                continue   # dim_date has no source
+                continue  # dim_date has no source
             try:
                 if r.status == "written":
                     audit.record_silver_complete(
@@ -632,7 +686,8 @@ def run_silver(*, batch_id: str | None = None) -> SilverRunSummary:
                 # Audit calls are best-effort here; log but don't propagate.
                 log.error(
                     "silver_audit_finalisation_failed",
-                    source=r.audit_source_name, error=str(e),
+                    source=r.audit_source_name,
+                    error=str(e),
                 )
 
         # ===== Aggregate verdict =======================================
@@ -640,15 +695,15 @@ def run_silver(*, batch_id: str | None = None) -> SilverRunSummary:
         rows_total = sum(r.rows_written for r in results)
 
         if failures:
-            error_summary = "; ".join(
-                f"{r.artifact_name}: {r.error_message}" for r in failures
-            )
+            error_summary = "; ".join(f"{r.artifact_name}: {r.error_message}" for r in failures)
             runs.mark_failed(batch_id, "silver", error=error_summary)
             layer_status = "failed"
         else:
             runs.mark_success(
-                batch_id, "silver",
-                rows_in=rows_total, rows_out=rows_total,
+                batch_id,
+                "silver",
+                rows_in=rows_total,
+                rows_out=rows_total,
             )
             layer_status = "success"
 

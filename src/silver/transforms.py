@@ -47,7 +47,6 @@ import yaml
 from src.utils.config import get_config
 from src.utils.logging import get_logger
 
-
 log = get_logger(__name__)
 
 
@@ -55,7 +54,7 @@ log = get_logger(__name__)
 # Silver; DQ can flag based on these values.
 UNKNOWN_POSITION_CANONICAL = "Unknown"
 UNKNOWN_POSITION_CATEGORY = "Unknown"
-UNKNOWN_COUNTRY_ISO = "XX"        # ISO 3166-1 reserves 'XX' for user-defined codes
+UNKNOWN_COUNTRY_ISO = "XX"  # ISO 3166-1 reserves 'XX' for user-defined codes
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +84,8 @@ def _load_position_taxonomy() -> dict[str, PositionMapping]:
         if not isinstance(spec, dict):
             log.warning(
                 "position_taxonomy_skipped_malformed_entry",
-                label=label, spec_type=type(spec).__name__,
+                label=label,
+                spec_type=type(spec).__name__,
             )
             continue
         mapping[str(label)] = PositionMapping(
@@ -111,10 +111,7 @@ def _load_country_overrides() -> dict[str, str]:
         raw = yaml.safe_load(f) or {}
     # Strip and uppercase values for safety; keys stay as-given for
     # exact-match lookups.
-    mapping: dict[str, str] = {
-        str(k): str(v).strip().upper()
-        for k, v in raw.items()
-    }
+    mapping: dict[str, str] = {str(k): str(v).strip().upper() for k, v in raw.items()}
     log.info(
         "country_overrides_loaded",
         path=str(path),

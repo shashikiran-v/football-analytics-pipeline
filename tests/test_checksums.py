@@ -21,12 +21,11 @@ from src.utils.checksums import (
     schema_version_hash,
 )
 
-
 # Known MD5s for canonical reference strings — verifiable with any
 # external MD5 tool, which lets the test suite double as documentation
 # of the algorithm we're using.
 EMPTY_MD5 = "d41d8cd98f00b204e9800998ecf8427e"
-HELLO_MD5 = "5d41402abc4b2a76b9719d911017c592"        # "hello"
+HELLO_MD5 = "5d41402abc4b2a76b9719d911017c592"  # "hello"
 
 
 # ---------------------------------------------------------------------------
@@ -64,7 +63,7 @@ class TestFileChecksum:
         f = tmp_path / "big"
         # 200 KiB of pseudo-random bytes — comfortably bigger than the
         # 64 KiB chunk size, so the read loop iterates multiple times.
-        content = bytes(range(256)) * 800   # ~200 KB, deterministic
+        content = bytes(range(256)) * 800  # ~200 KB, deterministic
         f.write_bytes(content)
 
         streamed = file_checksum_md5(f)
@@ -81,7 +80,7 @@ class TestFileChecksum:
         content = b"A" * 1000
         f.write_bytes(content)
 
-        chunked = file_checksum_md5(f, chunk_size=7)   # awkward size
+        chunked = file_checksum_md5(f, chunk_size=7)  # awkward size
         single_shot = hashlib.md5(content).hexdigest()
         assert chunked == single_shot
 

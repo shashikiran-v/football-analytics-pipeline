@@ -11,16 +11,13 @@ already supports spark so adding it later is zero-effort.
 
 from __future__ import annotations
 
-import os
-import tempfile
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 import pytest
 
 from src.engines.base import DataFrameEngine
 from src.engines.pandas_engine import PandasEngine
-
 
 # Engines available for parametrised tests. Spark is added in a later phase.
 _AVAILABLE_ENGINES: list[tuple[str, type[DataFrameEngine]]] = [
@@ -63,8 +60,8 @@ def _isolate_metadata_db(tmp_path: Path, monkeypatch) -> Iterator[None]:
     """
     monkeypatch.setenv("DATA_ROOT", str(tmp_path))
     # Clear cached config / engine so they re-read the new env.
-    from src.utils import config as cfg_mod
     from src.engines import factory as factory_mod
+    from src.utils import config as cfg_mod
 
     cfg_mod.get_config.cache_clear()
     factory_mod.get_engine.cache_clear()

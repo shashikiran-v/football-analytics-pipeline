@@ -28,7 +28,6 @@ from src.ingestion.file_loader import (
 from src.ingestion.manifest import MANIFEST_FILENAME
 from src.ingestion.registry import SourceDefinition, get_registry
 
-
 # ---------------------------------------------------------------------------
 # Helpers — build small synthetic sources for unit tests
 # ---------------------------------------------------------------------------
@@ -155,7 +154,7 @@ class TestHappyPath:
         fs_ts = result.fingerprint.source_modified_at_filesystem
         assert fs_ts is not None
         assert fs_ts[:4].isdigit()
-        assert "+" in fs_ts or fs_ts.endswith("Z")    # tz info present
+        assert "+" in fs_ts or fs_ts.endswith("Z")  # tz info present
 
 
 # ---------------------------------------------------------------------------
@@ -184,8 +183,8 @@ class TestManifestBranches:
         csv_path = tmp_path / "widgets.csv"
         _write_csv(csv_path, "id,label,price", ["1,x,1.0"])
 
-        from src.utils.checksums import file_checksum_md5
         from src.ingestion import manifest as manifest_mod
+        from src.utils.checksums import file_checksum_md5
 
         # Clear the manifest reader's lru_cache so the fixture's
         # synthetic manifest is fresh-read for each test.
@@ -217,6 +216,7 @@ class TestManifestBranches:
         _write_csv(csv_path, "id,label,price", ["1,x,1.0"])
 
         from src.ingestion import manifest as manifest_mod
+
         manifest_mod.get_manifest_for.cache_clear()
 
         _write_manifest(
@@ -224,7 +224,7 @@ class TestManifestBranches:
             file_entries={
                 "widgets.csv": {
                     "size_bytes": csv_path.stat().st_size,
-                    "checksum_md5": "deadbeef" * 4,   # deliberately wrong
+                    "checksum_md5": "deadbeef" * 4,  # deliberately wrong
                 },
             },
         )
@@ -244,6 +244,7 @@ class TestManifestBranches:
         _write_csv(csv_path, "id,label,price", ["1,x,1.0"])
 
         from src.ingestion import manifest as manifest_mod
+
         manifest_mod.get_manifest_for.cache_clear()
 
         _write_manifest(
@@ -308,8 +309,7 @@ SAMPLES_DIR = Path(__file__).resolve().parents[1] / "data" / "sample"
 
 @pytest.mark.parametrize(
     "source_name",
-    ["competitions", "clubs", "players",
-     "games", "appearances", "player_valuations"],
+    ["competitions", "clubs", "players", "games", "appearances", "player_valuations"],
 )
 def test_load_committed_sample(source_name, engine):
     """
@@ -322,6 +322,7 @@ def test_load_committed_sample(source_name, engine):
     """
     # Clear cache from earlier tests that pointed at tmp_paths
     from src.ingestion import manifest as manifest_mod
+
     manifest_mod.get_manifest_for.cache_clear()
 
     source = get_registry().get(source_name)

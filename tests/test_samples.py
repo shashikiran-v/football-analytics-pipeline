@@ -24,7 +24,6 @@ import pytest
 
 from src.ingestion.registry import get_registry
 
-
 SAMPLES_DIR = Path(__file__).resolve().parents[1] / "data" / "sample"
 
 
@@ -50,8 +49,14 @@ def _read_csv(name: str) -> tuple[list[str], list[dict[str, str]]]:
 class TestSampleFilesExist:
     @pytest.mark.parametrize(
         "filename",
-        ["competitions.csv", "clubs.csv", "players.csv",
-         "games.csv", "appearances.csv", "player_valuations.csv"],
+        [
+            "competitions.csv",
+            "clubs.csv",
+            "players.csv",
+            "games.csv",
+            "appearances.csv",
+            "player_valuations.csv",
+        ],
     )
     def test_file_exists_with_data(self, filename):
         path = SAMPLES_DIR / filename
@@ -76,8 +81,7 @@ class TestSchemaCompliance:
 
     @pytest.mark.parametrize(
         "source_name",
-        ["competitions", "clubs", "players",
-         "games", "appearances", "player_valuations"],
+        ["competitions", "clubs", "players", "games", "appearances", "player_valuations"],
     )
     def test_header_matches_registry_schema(self, source_name):
         source = get_registry().get(source_name)
@@ -126,12 +130,12 @@ class TestForeignKeyIntegrity:
         _, clubs = _read_csv("clubs.csv")
         club_ids = {c["club_id"] for c in clubs}
         for game in games:
-            assert game["home_club_id"] in club_ids, (
-                f"Game {game['game_id']} home_club_id is unknown"
-            )
-            assert game["away_club_id"] in club_ids, (
-                f"Game {game['game_id']} away_club_id is unknown"
-            )
+            assert (
+                game["home_club_id"] in club_ids
+            ), f"Game {game['game_id']} home_club_id is unknown"
+            assert (
+                game["away_club_id"] in club_ids
+            ), f"Game {game['game_id']} away_club_id is unknown"
 
     def test_appearances_have_exactly_one_orphan_player(self):
         """
@@ -155,9 +159,9 @@ class TestForeignKeyIntegrity:
         _, players = _read_csv("players.csv")
         player_ids = {p["player_id"] for p in players}
         for v in valuations:
-            assert v["player_id"] in player_ids, (
-                f"Valuation references unknown player_id {v['player_id']!r}"
-            )
+            assert (
+                v["player_id"] in player_ids
+            ), f"Valuation references unknown player_id {v['player_id']!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -184,7 +188,7 @@ class TestNormalisationCoverage:
         normaliser has work to do (e.g. 'England, United Kingdom' should
         normalise to GB)."""
         _, clubs = _read_csv("clubs.csv")
-        country_strings = {c["name"] for c in clubs}   # placeholder check
+        _ = {c["name"] for c in clubs}  # placeholder check
         _, players = _read_csv("players.csv")
         countries = {p["country_of_birth"] for p in players}
         # Should see at least one comma-containing country string
@@ -204,9 +208,9 @@ class TestSCD2Coverage:
     @pytest.mark.parametrize("player_id", ["1001", "1002", "1003"])
     def test_scd2_prone_player_exists(self, player_id):
         _, players = _read_csv("players.csv")
-        assert any(p["player_id"] == player_id for p in players), (
-            f"SCD2-prone player {player_id} missing from sample players.csv"
-        )
+        assert any(
+            p["player_id"] == player_id for p in players
+        ), f"SCD2-prone player {player_id} missing from sample players.csv"
 
     @pytest.mark.parametrize("player_id", ["1001", "1002", "1003"])
     def test_scd2_prone_player_has_multiple_valuations(self, player_id):

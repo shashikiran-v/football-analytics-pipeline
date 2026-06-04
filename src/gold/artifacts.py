@@ -433,6 +433,4 @@ def get_artifact(name: str) -> GoldArtifact:
         if artifact.name == name:
             return artifact
     available = ", ".join(a.name for a in ALL_ARTIFACTS)
-    raise KeyError(
-        f"Gold artifact {name!r} not registered. Available: {available}"
-    )
+    raise KeyError(f"Gold artifact {name!r} not registered. Available: {available}")

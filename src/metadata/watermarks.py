@@ -13,13 +13,13 @@ column to compare against; this DAO is unaware of those semantics.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from src.metadata.db import connect
 
 
 def _utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def get_watermark(table_name: str) -> str | None:

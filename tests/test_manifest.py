@@ -25,7 +25,6 @@ from src.ingestion.manifest import (
     load_manifest,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixture builders
 # ---------------------------------------------------------------------------
@@ -140,7 +139,7 @@ class TestMalformedJson:
 class TestVersionHandling:
     def test_unsupported_version_raises(self, tmp_path):
         d = _valid_manifest_dict()
-        d["manifest_version"] = 999    # not in SUPPORTED_MANIFEST_VERSIONS
+        d["manifest_version"] = 999  # not in SUPPORTED_MANIFEST_VERSIONS
         _write_manifest(tmp_path, d)
         with pytest.raises(ManifestError, match="unsupported version"):
             load_manifest(tmp_path)

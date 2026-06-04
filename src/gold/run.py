@@ -52,7 +52,7 @@ import argparse
 import sys
 import traceback
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from src.gold.artifacts import ALL_ARTIFACTS, GoldArtifact
@@ -62,7 +62,6 @@ from src.metadata import audit, runs
 from src.metadata.db import init_db
 from src.utils.config import get_config
 from src.utils.logging import bind_batch_context, configure_logging, get_logger
-
 
 log = get_logger(__name__)
 
@@ -77,7 +76,7 @@ class GoldArtifactOutcome:
     """Per-artifact outcome of a Gold run."""
 
     artifact_name: str
-    status: str                      # 'written' | 'failed'
+    status: str  # 'written' | 'failed'
     rows_written: int
     primary_source: str
     output_path: Path | None
@@ -89,7 +88,7 @@ class GoldRunSummary:
     """Aggregate outcome of a Gold run across all artifacts."""
 
     batch_id: str
-    layer_status: str                # 'success' | 'failed' | 'skipped'
+    layer_status: str  # 'success' | 'failed' | 'skipped'
     results: list[GoldArtifactOutcome]
     skipped_layer: bool = False
 
@@ -120,8 +119,10 @@ def _build_artifact_safe(
     """
     try:
         result: GoldBuildResult = build_gold_artifact(
-            artifact=artifact, conn=conn,
-            gold_root=gold_root, batch_id=batch_id,
+            artifact=artifact,
+            conn=conn,
+            gold_root=gold_root,
+            batch_id=batch_id,
         )
         return GoldArtifactOutcome(
             artifact_name=artifact.name,
@@ -169,9 +170,7 @@ def _format_summary(summary: GoldRunSummary) -> str:
             detail = f"rows={r.rows_written} primary_source={r.primary_source}"
         else:
             detail = f"error={r.error_message}"
-        lines.append(
-            f"    {r.artifact_name:<{width}}  {r.status:<8}  {detail}"
-        )
+        lines.append(f"    {r.artifact_name:<{width}}  {r.status:<8}  {detail}")
     return "\n".join(lines)
 
 
@@ -194,7 +193,7 @@ def run_gold(*, batch_id: str | None = None) -> GoldRunSummary:
     init_db()
 
     if batch_id is None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if cfg.batch.granularity == "hourly":
             batch_id = now.strftime("%Y-%m-%dT%H")
         elif cfg.batch.granularity == "daily":
@@ -204,10 +203,7 @@ def run_gold(*, batch_id: str | None = None) -> GoldRunSummary:
 
     with bind_batch_context(batch_id=batch_id, layer="gold"):
         # ===== Layer-grain idempotency check =============================
-        if (
-            cfg.batch.skip_if_already_succeeded
-            and runs.has_succeeded(batch_id, "gold")
-        ):
+        if cfg.batch.skip_if_already_succeeded and runs.has_succeeded(batch_id, "gold"):
             log.info("gold_layer_skipped_already_succeeded")
             return GoldRunSummary(
                 batch_id=batch_id,
@@ -228,8 +224,10 @@ def run_gold(*, batch_id: str | None = None) -> GoldRunSummary:
             ) as conn:
                 for artifact in ALL_ARTIFACTS:
                     outcome = _build_artifact_safe(
-                        artifact=artifact, conn=conn,
-                        gold_root=cfg.paths.gold, batch_id=batch_id,
+                        artifact=artifact,
+                        conn=conn,
+                        gold_root=cfg.paths.gold,
+                        batch_id=batch_id,
                     )
                     results.append(outcome)
         except Exception as e:
@@ -284,15 +282,15 @@ def run_gold(*, batch_id: str | None = None) -> GoldRunSummary:
         rows_total = sum(r.rows_written for r in results)
 
         if failures:
-            error_summary = "; ".join(
-                f"{r.artifact_name}: {r.error_message}" for r in failures
-            )
+            error_summary = "; ".join(f"{r.artifact_name}: {r.error_message}" for r in failures)
             runs.mark_failed(batch_id, "gold", error=error_summary)
             layer_status = "failed"
         else:
             runs.mark_success(
-                batch_id, "gold",
-                rows_in=rows_total, rows_out=rows_total,
+                batch_id,
+                "gold",
+                rows_in=rows_total,
+                rows_out=rows_total,
             )
             layer_status = "success"
 

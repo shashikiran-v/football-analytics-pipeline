@@ -50,7 +50,6 @@ from src.silver.run import run_silver
 from src.utils.config import get_config
 from src.utils.logging import get_logger
 
-
 log = get_logger(__name__)
 
 
@@ -81,6 +80,7 @@ def _batch_id_from_context(context: dict[str, Any]) -> str:
         # Manual trigger without an interval (e.g. tests calling the
         # wrapper directly); fall back to today's date.
         from datetime import date
+
         return date.today().isoformat()
     # pendulum.DateTime supports strftime
     return data_interval_start.strftime("%Y-%m-%d")
@@ -154,12 +154,8 @@ def run_silver_task(**context: Any) -> dict[str, Any]:
     result = {
         "batch_id": batch_id,
         "layer_status": summary.layer_status,
-        "artifacts_written": sum(
-            1 for r in summary.results if r.status == "written"
-        ),
-        "artifacts_failed": sum(
-            1 for r in summary.results if r.status == "failed"
-        ),
+        "artifacts_written": sum(1 for r in summary.results if r.status == "written"),
+        "artifacts_failed": sum(1 for r in summary.results if r.status == "failed"),
     }
 
     if summary.layer_status == "failed":
@@ -229,9 +225,7 @@ def dq_gate_task(
     rows_in = report.get("rows_in_total", 0)
     critical_failures = report.get("critical_failures_total", 0)
 
-    quarantine_pct = (
-        (rows_quarantined / rows_in * 100.0) if rows_in > 0 else 0.0
-    )
+    quarantine_pct = (rows_quarantined / rows_in * 100.0) if rows_in > 0 else 0.0
 
     log.info(
         "airflow_dq_gate_evaluated",
@@ -243,9 +237,7 @@ def dq_gate_task(
         threshold_pct=quarantine_threshold_pct,
     )
 
-    fail_decision = (
-        critical_failures > 0 and quarantine_pct > quarantine_threshold_pct
-    )
+    fail_decision = critical_failures > 0 and quarantine_pct > quarantine_threshold_pct
 
     result = {
         "batch_id": batch_id,
@@ -284,12 +276,8 @@ def run_gold_task(**context: Any) -> dict[str, Any]:
     result = {
         "batch_id": batch_id,
         "layer_status": summary.layer_status,
-        "artifacts_written": sum(
-            1 for r in summary.results if r.status == "written"
-        ),
-        "artifacts_failed": sum(
-            1 for r in summary.results if r.status == "failed"
-        ),
+        "artifacts_written": sum(1 for r in summary.results if r.status == "written"),
+        "artifacts_failed": sum(1 for r in summary.results if r.status == "failed"),
         "total_rows": summary.total_rows,
     }
 

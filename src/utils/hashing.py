@@ -28,7 +28,7 @@ import hashlib
 
 # Unit-separator code point. Used between values so column boundaries
 # can't be ambiguous (e.g. "Foo" + "Bar" vs "Foob" + "ar").
-HASH_SEPARATOR = "\u241F"
+HASH_SEPARATOR = "\u241f"
 
 # Sentinel for missing values. Picking a fixed string avoids the trap
 # where None vs NaN vs empty string would hash differently.
@@ -49,7 +49,7 @@ def hash_row(values: list[object]) -> str:
             continue
         # pandas NaN is a float; isinstance(v, float) and v != v catches it
         # without importing numpy/pandas here (keeps this module pure).
-        if isinstance(v, float) and v != v:  # noqa: PLR0124  (NaN check)
+        if isinstance(v, float) and v != v:
             parts.append(NULL_SENTINEL)
             continue
         parts.append(str(v))

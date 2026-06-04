@@ -23,18 +23,17 @@ The pattern in every layer task is:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 
 from src.metadata.db import connect
-
 
 Layer = Literal["bronze", "silver", "gold", "dq", "ingestion"]
 Status = Literal["running", "success", "failed"]
 
 
 def _utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def mark_started(batch_id: str, layer: Layer) -> None:

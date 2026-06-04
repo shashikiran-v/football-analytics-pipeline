@@ -31,16 +31,15 @@ LoadResult.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from src.engines.base import DataFrame, DataFrameEngine
 from src.ingestion.manifest import get_manifest_for
 from src.ingestion.registry import SourceDefinition
+from src.metadata.audit import FileFingerprint
 from src.utils.checksums import file_checksum_md5, schema_version_hash
 from src.utils.logging import get_logger
-from src.metadata.audit import FileFingerprint
-
 
 log = get_logger(__name__)
 
@@ -103,8 +102,7 @@ def load_source(
     path = source.resolve_path(raw_root)
     if not path.is_file():
         raise FileLoaderError(
-            f"Source file not found for source={source.name!r}: {path} "
-            f"(raw_root={raw_root})"
+            f"Source file not found for source={source.name!r}: {path} (raw_root={raw_root})"
         )
 
     log.info(
@@ -134,7 +132,7 @@ def load_source(
     size_bytes = path.stat().st_size
 
     # Filesystem mtime — always known. We record in ISO8601 UTC.
-    fs_mtime_dt = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+    fs_mtime_dt = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
     fs_mtime_iso = fs_mtime_dt.isoformat(timespec="seconds")
 
     # --- Vendor metadata via manifest, if present ------------------------
@@ -158,7 +156,7 @@ def load_source(
                 note="file changed since manifest was written; using computed checksum",
             )
         vendor_mtime = manifest.vendor_last_updated
-        vendor_source = f"{manifest.vendor}_manifest"   # e.g. 'kaggle_manifest'
+        vendor_source = f"{manifest.vendor}_manifest"  # e.g. 'kaggle_manifest'
 
     fingerprint = FileFingerprint(
         path=path,

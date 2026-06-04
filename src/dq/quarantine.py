@@ -19,7 +19,6 @@ from src.dq.runner import DQResult
 from src.engines.base import DataFrameEngine
 from src.utils.logging import get_logger
 
-
 log = get_logger(__name__)
 
 
@@ -58,7 +57,9 @@ def quarantine_rejected_rows(
 
     # Append the partition column. Same pattern as Bronze writer.
     df_with_batch = engine.with_constant_column(
-        dq_result.failing_rows, BATCH_ID_COLUMN, batch_id,
+        dq_result.failing_rows,
+        BATCH_ID_COLUMN,
+        batch_id,
     )
     output_dir = rejected_root / dq_result.source_name
     engine.write_parquet(

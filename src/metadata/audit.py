@@ -49,14 +49,13 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
 from src.metadata.db import connect
 from src.utils.logging import get_logger
-
 
 log = get_logger(__name__)
 
@@ -113,8 +112,8 @@ _LEGAL_TRANSITIONS: dict[FileStatus, set[FileStatus]] = {
     FileStatus.INGESTING: {FileStatus.INGESTED},
     FileStatus.INGESTED: {FileStatus.TRANSFORMING},
     FileStatus.TRANSFORMING: {FileStatus.TRANSFORMED},
-    FileStatus.TRANSFORMED: set(),    # terminal success
-    FileStatus.FAILED: set(),         # terminal failure
+    FileStatus.TRANSFORMED: set(),  # terminal success
+    FileStatus.FAILED: set(),  # terminal failure
 }
 
 
@@ -134,9 +133,9 @@ class FileFingerprint:
     size_bytes: int
     checksum_md5: str
     schema_version_hash: str
-    source_modified_at_filesystem: str        # always known, ISO8601
-    source_modified_at_vendor: str | None = None    # from manifest / HTTP
-    vendor_timestamp_source: str | None = None      # 'manifest' | 'http_header' | None
+    source_modified_at_filesystem: str  # always known, ISO8601
+    source_modified_at_vendor: str | None = None  # from manifest / HTTP
+    vendor_timestamp_source: str | None = None  # 'manifest' | 'http_header' | None
 
 
 @dataclass(frozen=True)
@@ -197,9 +196,9 @@ class ReconciliationFinding:
     batch_id: str
     source_name: str
     source_file_path: str
-    severity: str        # "CRITICAL" | "WARN"
-    code: str            # short stable identifier
-    message: str         # human-readable explanation
+    severity: str  # "CRITICAL" | "WARN"
+    code: str  # short stable identifier
+    message: str  # human-readable explanation
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +224,7 @@ class AuditStateError(AuditError):
 
 
 def _utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def _emit_event(
@@ -279,9 +278,7 @@ def _assert_transition(
 ) -> None:
     """Raise AuditStateError if (current -> target) is illegal."""
     if current is None:
-        raise AuditStateError(
-            f"File not registered: batch={batch_id} path={source_file_path}"
-        )
+        raise AuditStateError(f"File not registered: batch={batch_id} path={source_file_path}")
     if target not in _LEGAL_TRANSITIONS.get(current, set()):
         raise AuditStateError(
             f"Illegal transition {current.value} -> {target.value} "
@@ -352,7 +349,9 @@ def register_file(
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    batch_id, source_name, path_str,
+                    batch_id,
+                    source_name,
+                    path_str,
                     fingerprint.size_bytes,
                     fingerprint.checksum_md5,
                     fingerprint.schema_version_hash,
@@ -398,12 +397,12 @@ def mark_ingesting(
     with connect() as conn:
         conn.execute("BEGIN")
         try:
-            current = _current_status(
-                conn, batch_id=batch_id, source_file_path=path_str
-            )
+            current = _current_status(conn, batch_id=batch_id, source_file_path=path_str)
             _assert_transition(
-                current, FileStatus.INGESTING,
-                batch_id=batch_id, source_file_path=path_str,
+                current,
+                FileStatus.INGESTING,
+                batch_id=batch_id,
+                source_file_path=path_str,
             )
             conn.execute(
                 """
@@ -440,12 +439,12 @@ def record_ingestion_complete(
     with connect() as conn:
         conn.execute("BEGIN")
         try:
-            current = _current_status(
-                conn, batch_id=batch_id, source_file_path=path_str
-            )
+            current = _current_status(conn, batch_id=batch_id, source_file_path=path_str)
             _assert_transition(
-                current, FileStatus.INGESTED,
-                batch_id=batch_id, source_file_path=path_str,
+                current,
+                FileStatus.INGESTED,
+                batch_id=batch_id,
+                source_file_path=path_str,
             )
             conn.execute(
                 """
@@ -457,8 +456,10 @@ def record_ingestion_complete(
                 """,
                 (
                     FileStatus.INGESTED.value,
-                    source_row_count, bronze_row_count,
-                    batch_id, path_str,
+                    source_row_count,
+                    bronze_row_count,
+                    batch_id,
+                    path_str,
                 ),
             )
             _emit_event(
@@ -559,7 +560,8 @@ def mark_transforming(
                 _assert_transition(
                     FileStatus(r["status"]),
                     FileStatus.TRANSFORMING,
-                    batch_id=batch_id, source_file_path=r["source_file_path"],
+                    batch_id=batch_id,
+                    source_file_path=r["source_file_path"],
                 )
             conn.execute(
                 """
@@ -610,7 +612,8 @@ def record_silver_complete(
                 _assert_transition(
                     FileStatus(r["status"]),
                     FileStatus.TRANSFORMED,
-                    batch_id=batch_id, source_file_path=r["source_file_path"],
+                    batch_id=batch_id,
+                    source_file_path=r["source_file_path"],
                 )
             now = _utcnow()
             conn.execute(
@@ -623,8 +626,10 @@ def record_silver_complete(
                 """,
                 (
                     FileStatus.TRANSFORMED.value,
-                    silver_row_count, now,
-                    batch_id, source_name,
+                    silver_row_count,
+                    now,
+                    batch_id,
+                    source_name,
                 ),
             )
             for r in file_rows:
@@ -707,7 +712,6 @@ def record_gold_complete(
             raise
 
 
-
 def mark_failed(
     *,
     batch_id: str,
@@ -742,8 +746,11 @@ def mark_failed(
                     """,
                     (
                         FileStatus.FAILED.value,
-                        truncated, stage, _utcnow(),
-                        batch_id, path_str,
+                        truncated,
+                        stage,
+                        _utcnow(),
+                        batch_id,
+                        path_str,
                     ),
                 )
                 _emit_event(
@@ -788,9 +795,7 @@ def record_schema_drift(
         "current_schema_hash": current_schema_hash,
         "columns_added": columns_added or [],
         "columns_removed": columns_removed or [],
-        "dtype_changes": (
-            {k: list(v) for k, v in (dtype_changes or {}).items()}
-        ),
+        "dtype_changes": ({k: list(v) for k, v in (dtype_changes or {}).items()}),
     }
     with connect() as conn:
         _emit_event(
@@ -969,9 +974,7 @@ def find_most_recent_ingestion_for_source(
                 """,
                 (as_of_batch_id,),
             ).fetchone()
-            as_of_ts = (
-                as_of_ts_row["registered_at"] if as_of_ts_row else None
-            )
+            as_of_ts = as_of_ts_row["registered_at"] if as_of_ts_row else None
 
             if as_of_ts is None:
                 # No audit rows for the as_of batch yet — fall through
@@ -1101,11 +1104,15 @@ def reconcile_batch(
             and f.source_row_count is not None
             and f.bronze_row_count > f.source_row_count
         ):
-            per_file.append(_make_finding(
-                f, "CRITICAL", "bronze_inflated",
-                f"Bronze rows ({f.bronze_row_count}) > source rows "
-                f"({f.source_row_count}) — invented rows",
-            ))
+            per_file.append(
+                _make_finding(
+                    f,
+                    "CRITICAL",
+                    "bronze_inflated",
+                    f"Bronze rows ({f.bronze_row_count}) > source rows "
+                    f"({f.source_row_count}) — invented rows",
+                )
+            )
 
         if (
             f.bronze_row_count is not None
@@ -1114,22 +1121,26 @@ def reconcile_batch(
         ):
             expected_silver = f.bronze_row_count - f.rejected_row_count
             if f.silver_row_count != expected_silver:
-                per_file.append(_make_finding(
-                    f, "CRITICAL", "row_count_drift",
-                    f"Silver rows ({f.silver_row_count}) != expected "
-                    f"({expected_silver}) = bronze ({f.bronze_row_count}) "
-                    f"- rejected ({f.rejected_row_count})",
-                ))
+                per_file.append(
+                    _make_finding(
+                        f,
+                        "CRITICAL",
+                        "row_count_drift",
+                        f"Silver rows ({f.silver_row_count}) != expected "
+                        f"({expected_silver}) = bronze ({f.bronze_row_count}) "
+                        f"- rejected ({f.rejected_row_count})",
+                    )
+                )
 
-        if (
-            f.bronze_row_count is not None
-            and f.bronze_row_count > 0
-            and f.silver_row_count == 0
-        ):
-            per_file.append(_make_finding(
-                f, "CRITICAL", "complete_silver_loss",
-                f"All {f.bronze_row_count} Bronze rows lost before Silver",
-            ))
+        if f.bronze_row_count is not None and f.bronze_row_count > 0 and f.silver_row_count == 0:
+            per_file.append(
+                _make_finding(
+                    f,
+                    "CRITICAL",
+                    "complete_silver_loss",
+                    f"All {f.bronze_row_count} Bronze rows lost before Silver",
+                )
+            )
 
         # --- WARN rules --------------------------------------------
         if (
@@ -1139,24 +1150,36 @@ def reconcile_batch(
             and f.rejected_row_count / f.bronze_row_count > _HIGH_REJECT_RATE_THRESHOLD
         ):
             pct = 100 * f.rejected_row_count / f.bronze_row_count
-            per_file.append(_make_finding(
-                f, "WARN", "high_reject_rate",
-                f"DQ rejected {f.rejected_row_count}/{f.bronze_row_count} "
-                f"rows ({pct:.1f}%); threshold "
-                f"{_HIGH_REJECT_RATE_THRESHOLD * 100:.0f}%",
-            ))
+            per_file.append(
+                _make_finding(
+                    f,
+                    "WARN",
+                    "high_reject_rate",
+                    f"DQ rejected {f.rejected_row_count}/{f.bronze_row_count} "
+                    f"rows ({pct:.1f}%); threshold "
+                    f"{_HIGH_REJECT_RATE_THRESHOLD * 100:.0f}%",
+                )
+            )
 
         if f.bronze_row_count == 0:
-            per_file.append(_make_finding(
-                f, "WARN", "empty_source_file",
-                f"Source file had 0 rows in Bronze",
-            ))
+            per_file.append(
+                _make_finding(
+                    f,
+                    "WARN",
+                    "empty_source_file",
+                    "Source file had 0 rows in Bronze",
+                )
+            )
 
         if f.status not in (FileStatus.TRANSFORMED, FileStatus.FAILED):
-            per_file.append(_make_finding(
-                f, "WARN", "non_terminal_status",
-                f"File did not reach terminal status (still {f.status.value})",
-            ))
+            per_file.append(
+                _make_finding(
+                    f,
+                    "WARN",
+                    "non_terminal_status",
+                    f"File did not reach terminal status (still {f.status.value})",
+                )
+            )
 
         findings.extend(per_file)
 

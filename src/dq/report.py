@@ -46,7 +46,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -54,7 +54,6 @@ from src.dq.rules import SEVERITY_CRITICAL, SEVERITY_WARNING
 from src.dq.runner import DQResult
 from src.engines.base import DataFrameEngine
 from src.utils.logging import get_logger
-
 
 log = get_logger(__name__)
 
@@ -114,9 +113,7 @@ def build_source_report(
     engine: DataFrameEngine,
 ) -> DQSourceReport:
     """Convert a DQResult into the report-shaped representation."""
-    rows_quarantined = (
-        engine.count(result.failing_rows) if result.failing_rows is not None else 0
-    )
+    rows_quarantined = engine.count(result.failing_rows) if result.failing_rows is not None else 0
     rows_clean = result.rows_in - rows_quarantined
     return DQSourceReport(
         source_name=result.source_name,
@@ -166,7 +163,7 @@ def build_batch_report(
     )
     return DQBatchReport(
         batch_id=batch_id,
-        generated_at=datetime.now(timezone.utc).isoformat(),
+        generated_at=datetime.now(UTC).isoformat(),
         summary=summary,
         sources=source_reports,
     )
@@ -229,4 +226,3 @@ def read_dq_report(report_path: Path) -> dict[str, Any]:
         "warning_failures_total": summary.get("warning_count", 0),
         "sources_with_critical": summary.get("sources_with_critical_failures", []),
     }
-    return output_path
