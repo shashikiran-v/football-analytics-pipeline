@@ -10,3 +10,13 @@ ruff==0.4.10                 # lint + format
 mypy==1.10.0
 types-PyYAML==6.0.12.20240311
 pandas-stubs==2.2.2.240603
+
+# --- Notebook execution (for scripts/build_notebook.py) ---
+# Not used by the pipeline at runtime. Required if a contributor
+# wants to rebuild notebooks/gold_exploration.ipynb against fresh
+# pipeline output. The notebook itself ships with cell outputs
+# committed, so consumers don't need these.
+nbformat==5.10.4
+nbclient==0.10.0
+ipykernel==6.29.5
+matplotlib==3.9.0

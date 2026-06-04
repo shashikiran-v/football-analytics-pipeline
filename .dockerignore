@@ -83,6 +83,12 @@ LICENSE
 tests/
 pytest.ini
 
+# Notebooks are dev artifacts; they ship in the repo for reviewers
+# but aren't part of the runtime image.
+notebooks/
+scripts/build_notebook.py
+*.ipynb
+
 # Local docker-compose state
 .docker/
 docker-compose.override.yml

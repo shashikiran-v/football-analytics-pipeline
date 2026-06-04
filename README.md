@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/shashikiran-v/football-analytics-pipeline/actions/workflows/ci.yml/badge.svg)](https://github.com/shashikiran-v/football-analytics-pipeline/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-435%20passing-brightgreen.svg)](https://github.com/shashikiran-v/football-analytics-pipeline/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-456%20passing-brightgreen.svg)](https://github.com/shashikiran-v/football-analytics-pipeline/actions/workflows/ci.yml)
 [![ADRs](https://img.shields.io/badge/ADRs-11-blue.svg)](docs/adr/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
@@ -76,6 +76,32 @@ including the gotchas surfaced during the build.
 
 ---
 
+## Sample analytics
+
+For a quick visual tour of what the Gold layer looks like in practice,
+see [`notebooks/gold_exploration.ipynb`](notebooks/gold_exploration.ipynb).
+The notebook ships with executed outputs, so it renders inline on
+GitHub — no need to launch Jupyter to see the results.
+
+Seven narrative cells walk through:
+
+* Top scorers by season with their club at match time (demonstrates
+  as-of-event FK resolution from [ADR-0008](docs/adr/0008-cross-batch-semantics.md))
+* Goal distribution by canonical position, with a bar chart
+* Club standings rolled up from `fact_games`
+* Player valuation trends across observations
+* SCD Type 2 dimension storage layout — what `effective_date` /
+  `end_date` / `is_current` actually look like on disk
+* A star-schema join: top scorer at each club via `ROW_NUMBER()`
+* The pipeline's own audit trail from `pipeline_runs`
+
+Every query goes through DuckDB against the Gold parquet files, which
+is exactly how a connected BI tool (Superset, Metabase, Tableau) would
+read the data in production. The pipeline's job ends at producing
+Gold; the consumer chooses the visualisation layer.
+
+---
+
 ## Why this design
 
 Three decisions shape the architecture; each is documented in detail
@@ -139,8 +165,9 @@ football-analytics-pipeline/
 │   ├── metadata/       # SQLite DAOs: audit, pipeline_runs, dq_results
 │   ├── models/         # Pydantic schemas
 │   └── utils/          # Config, structured logging, checksums, row hashing
-├── tests/              # 435 pytest tests
-├── scripts/            # Sample generator + Kaggle seeder
+├── tests/              # 456 pytest tests
+├── scripts/            # Sample generator + Kaggle seeder + notebook builder
+├── notebooks/          # Jupyter exploration of the Gold layer
 ├── data/
 │   ├── sample/         # Committed deterministic fixtures
 │   ├── day1/, day2/    # Gitignored — Kaggle data lands here
